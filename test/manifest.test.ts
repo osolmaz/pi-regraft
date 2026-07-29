@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  emptyManifest,
   findGraft,
   readManifest,
   upsertGraft,
@@ -63,6 +64,19 @@ describe("manifest", () => {
     await writeManifest(path, m);
     const read = await readManifest(path);
     expect(read.grafts.map((g) => g.name)).toEqual(["alpha", "zebra"]);
+  });
+
+  it("rejects a symbolic-link manifest without changing its target", async () => {
+    const target = join(root, "external.json");
+    const original = '{"outside":true}\n';
+    await writeFile(target, original);
+    await symlink(target, path);
+
+    await expect(readManifest(path)).rejects.toThrow("must not be a symbolic link");
+    await expect(writeManifest(path, emptyManifest())).rejects.toThrow(
+      "must not be a symbolic link",
+    );
+    expect(await readFile(target, "utf8")).toBe(original);
   });
 });
 
