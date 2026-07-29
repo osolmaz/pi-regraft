@@ -38,16 +38,29 @@ async function gitOrThrow(args: string[], cwd?: string): Promise<string> {
   return stdout;
 }
 
-/** Resolve a ref on a remote to a full commit id without cloning. */
+/** Resolve a remote ref to one unambiguous commit id without cloning. */
 export async function resolveRef(url: string, ref: string): Promise<string> {
-  const out = await gitOrThrow(["ls-remote", "--", url, ref]);
-  const line = out.split("\n").find((candidate) => candidate.trim().length > 0);
-  if (!line) throw new Error(`ref "${ref}" not found on ${url}`);
-  const sha = line.split(/\s+/)[0];
-  if (!sha || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) {
+  const out = await gitOrThrow(["ls-remote", "--", url, ref, `${ref}^{}`]);
+  const records = out
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [objectId, name] = line.split(/\s+/, 2);
+      return { objectId, name };
+    });
+  const refs = records.filter((record) => record.name && !record.name.endsWith("^{}"));
+  if (refs.length === 0) throw new Error(`ref "${ref}" not found on ${url}`);
+  if (refs.length > 1) {
+    throw new Error(`ref "${ref}" is ambiguous on ${url}; use its full refs/... name`);
+  }
+
+  const selected = refs[0]!;
+  const peeled = records.find((record) => record.name === `${selected.name}^{}`);
+  const commit = peeled?.objectId ?? selected.objectId;
+  if (!commit || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
     throw new Error(`could not resolve "${ref}" on ${url} to a commit`);
   }
-  return sha;
+  return commit;
 }
 
 async function assertSourceDirectory(clone: string, subdir: string): Promise<string> {
