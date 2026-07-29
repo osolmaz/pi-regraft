@@ -284,8 +284,9 @@ async function mergeFile(
       basePath,
       upstreamPath,
     ]);
-    // Git reports -1 on an internal error, which process exit status exposes as 255.
-    if (result.code < 0 || result.code === 255) {
+    // Git reports the conflict count from 1 through 127. Fatal and usage
+    // failures use 128 or above; a negative process result is an execution error.
+    if (result.code < 0 || result.code >= 128) {
       throw new Error(`git merge-file failed: ${result.stderr.trim() || result.stdout.trim()}`);
     }
     return { content: await readFile(localPath), conflicted: result.code > 0 };

@@ -157,4 +157,27 @@ describe("threeWayMerge", () => {
     expect(report.conflicts).toContain("item/local.txt");
     expect(await readFile(join(local, "item/local.txt"), "utf8")).toBe("local addition\n");
   });
+
+  it("fails when git merge-file reports a fatal error", async () => {
+    await put(base, "a.txt", "base\n");
+    await put(local, "a.txt", "local\n");
+    await put(upstream, "a.txt", "upstream\n");
+    const keys = ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"] as const;
+    const previous = keys.map((key) => process.env[key]);
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "merge.conflictStyle";
+    process.env.GIT_CONFIG_VALUE_0 = "invalid";
+
+    try {
+      await expect(threeWayMerge(base, local, upstream)).rejects.toThrow(
+        "git merge-file failed",
+      );
+    } finally {
+      keys.forEach((key, index) => {
+        const value = previous[index];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      });
+    }
+  });
 });

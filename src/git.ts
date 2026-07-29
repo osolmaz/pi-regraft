@@ -44,7 +44,7 @@ export async function resolveRef(url: string, ref: string): Promise<string> {
   const line = out.split("\n").find((candidate) => candidate.trim().length > 0);
   if (!line) throw new Error(`ref "${ref}" not found on ${url}`);
   const sha = line.split(/\s+/)[0];
-  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+  if (!sha || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) {
     throw new Error(`could not resolve "${ref}" on ${url} to a commit`);
   }
   return sha;
@@ -164,7 +164,16 @@ export async function headCommit(repoRoot: string): Promise<string> {
 /** Refuse an update that would erase ignored, uncommitted files in a graft. */
 export async function assertNoIgnoredPaths(repoRoot: string, path: string): Promise<void> {
   const output = await gitOrThrow(
-    ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", path],
+    [
+      "--literal-pathspecs",
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "-z",
+      "--",
+      path,
+    ],
     repoRoot,
   );
   const ignored = output.split("\0").filter(Boolean);
@@ -193,17 +202,17 @@ export async function commitLocalBase(
   upstreamCommit: string,
 ): Promise<string> {
   validateTrailerValue(name, "graft name");
-  if (!/^[0-9a-f]{40}$/.test(upstreamCommit)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(upstreamCommit)) {
     throw new Error(`invalid upstream commit: ${upstreamCommit}`);
   }
   // A pristine base must include upstream files even when consumer ignore rules
   // match their destination paths.
   const staged = await git(
-    ["-c", "core.fileMode=true", "add", "-f", "--", ...paths],
+    ["--literal-pathspecs", "-c", "core.fileMode=true", "add", "-f", "--", ...paths],
     repoRoot,
   );
   if (staged.code !== 0) {
-    await git(["reset", "--", ...paths], repoRoot);
+    await git(["--literal-pathspecs", "reset", "--", ...paths], repoRoot);
     throw new Error(
       `could not stage the local regraft base: ${staged.stderr.trim() || staged.stdout.trim()}`,
     );
@@ -219,7 +228,7 @@ export async function commitLocalBase(
     repoRoot,
   );
   if (committed.code !== 0) {
-    await git(["reset", "--", ...paths], repoRoot);
+    await git(["--literal-pathspecs", "reset", "--", ...paths], repoRoot);
     throw new Error(
       `could not commit the local regraft base: ${committed.stderr.trim() || committed.stdout.trim()}`,
     );
@@ -331,17 +340,54 @@ export async function exportLocalTree(
 
 /** Restore selected paths from HEAD after a failed base-commit attempt. */
 export async function restoreHeadPaths(repoRoot: string, paths: string[]): Promise<void> {
-  await git(["reset", "--", ...paths], repoRoot);
-  await gitOrThrow(["restore", "--source=HEAD", "--staged", "--worktree", "--", ...paths], repoRoot);
+  await gitOrThrow(["--literal-pathspecs", "reset", "--", ...paths], repoRoot);
+
+  const trackedPaths: string[] = [];
+  for (const path of paths) {
+    const entries = await gitOrThrow(
+      ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "HEAD", "--", path],
+      repoRoot,
+    );
+    if (entries.length > 0) trackedPaths.push(path);
+  }
+
+  let restoreError: unknown;
+  if (trackedPaths.length > 0) {
+    try {
+      await gitOrThrow(
+        [
+          "--literal-pathspecs",
+          "restore",
+          "--source=HEAD",
+          "--staged",
+          "--worktree",
+          "--",
+          ...trackedPaths,
+        ],
+        repoRoot,
+      );
+    } catch (error) {
+      restoreError = error;
+    }
+  }
+
   // The update preflight rejects pre-existing ignored/untracked files, so every
   // remaining untracked path here was created by the failed upstream import.
-  await gitOrThrow(["clean", "-fdx", "--", ...paths], repoRoot);
+  await gitOrThrow(["--literal-pathspecs", "clean", "-fdx", "--", ...paths], repoRoot);
+  if (restoreError) throw restoreError;
 }
 
 /** Whether any selected path differs from HEAD after a successful base commit. */
 export async function pathsDirty(repoRoot: string, paths: string[]): Promise<boolean> {
   const out = await gitOrThrow(
-    ["status", "--porcelain=v1", "--untracked-files=all", "--", ...paths],
+    [
+      "--literal-pathspecs",
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--",
+      ...paths,
+    ],
     repoRoot,
   );
   return out.length > 0;

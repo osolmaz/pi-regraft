@@ -254,6 +254,28 @@ describe("repository safety", () => {
     expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
   });
 
+  it("cleans a newly nonempty destination when an update commit fails", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+
+    await rm(join(upstream, "a.txt"));
+    await commitUpstream("empty v2");
+    await updateGraft(manifestPath, "a");
+
+    await writeFile(join(upstream, "b.txt"), "b3\n");
+    await commitUpstream("v3");
+    await g(["config", "user.name", ""], project);
+
+    await expect(updateGraft(manifestPath, "a")).rejects.toThrow(
+      "could not commit the local regraft base",
+    );
+
+    expect(existsSync(join(project, "vendor/a/b.txt"))).toBe(false);
+    expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
+  });
+
   it("refuses update while local edits are uncommitted", async () => {
     await writeFile(join(upstream, "a.txt"), "a1\n");
     await commitUpstream("v1");
@@ -361,6 +383,23 @@ describe("repository safety", () => {
 });
 
 describe("source selection", () => {
+  it("supports SHA-256 upstream repositories", async () => {
+    await rm(join(upstream, ".git"), { recursive: true, force: true });
+    await g(["init", "-q", "-b", "main", "--object-format=sha256"], upstream);
+    await configureRepo(upstream);
+    await writeFile(join(upstream, "a.txt"), "sha256\n");
+    await commitUpstream("v1");
+
+    const { graft, baseCommit } = await addGraft({
+      manifestPath: join(project, "regraft.json"),
+      spec: `${upstream}@main`,
+      dest: "vendor/a",
+    });
+
+    expect(graft.commit).toMatch(/^[0-9a-f]{64}$/);
+    expect(await g(["show", `${baseCommit}:vendor/a/a.txt`], project)).toBe("sha256\n");
+  });
+
   it("rejects file selections that cannot be updated as trees", async () => {
     await writeFile(join(upstream, "only.txt"), "one\n");
     await commitUpstream("v1");
