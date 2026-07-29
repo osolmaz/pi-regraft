@@ -197,6 +197,25 @@ describe("repository safety", () => {
     expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
   });
 
+  it("rolls newly added upstream files back when an update commit fails", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+    await g(["config", "user.name", ""], project);
+    await writeFile(join(upstream, "a.txt"), "a2\n");
+    await writeFile(join(upstream, "new.txt"), "new\n");
+    await commitUpstream("v2");
+
+    await expect(updateGraft(manifestPath, "a")).rejects.toThrow(
+      "could not commit the local regraft base",
+    );
+
+    expect(await readFile(join(project, "vendor/a/a.txt"), "utf8")).toBe("a1\n");
+    expect(existsSync(join(project, "vendor/a/new.txt"))).toBe(false);
+    expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
+  });
+
   it("refuses update while local edits are uncommitted", async () => {
     await writeFile(join(upstream, "a.txt"), "a1\n");
     await commitUpstream("v1");
@@ -285,6 +304,27 @@ describe("repository safety", () => {
 });
 
 describe("source selection", () => {
+  it("force-stages upstream files matched by consumer ignore rules", async () => {
+    await mkdir(join(upstream, "dist"));
+    await writeFile(join(upstream, "dist/bundle.js"), "bundle\n");
+    await commitUpstream("v1");
+    await writeFile(join(project, ".gitignore"), "vendor/tool/dist/\n");
+    await commitProject("chore: ignore generated distributions");
+
+    const { baseCommit } = await addGraft({
+      manifestPath: join(project, "regraft.json"),
+      spec: `${upstream}@main`,
+      dest: "vendor/tool",
+    });
+
+    expect(await g(["show", `${baseCommit}:vendor/tool/dist/bundle.js`], project)).toBe(
+      "bundle\n",
+    );
+    expect((await g(["status", "--porcelain", "--ignored"], project))).not.toContain(
+      "vendor/tool/dist",
+    );
+  });
+
   it("reports upToDate when the tracked ref has not moved", async () => {
     await writeFile(join(upstream, "a.txt"), "a\n");
     await commitUpstream("v1");

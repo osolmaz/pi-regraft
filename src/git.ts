@@ -181,7 +181,9 @@ export async function commitLocalBase(
   if (!/^[0-9a-f]{40}$/.test(upstreamCommit)) {
     throw new Error(`invalid upstream commit: ${upstreamCommit}`);
   }
-  const staged = await git(["add", "--", ...paths], repoRoot);
+  // A pristine base must include upstream files even when consumer ignore rules
+  // match their destination paths.
+  const staged = await git(["add", "-f", "--", ...paths], repoRoot);
   if (staged.code !== 0) {
     await git(["reset", "--", ...paths], repoRoot);
     throw new Error(
@@ -306,10 +308,13 @@ export async function exportLocalTree(
   }
 }
 
-/** Restore tracked paths from HEAD after a failed base-commit attempt. */
+/** Restore selected paths from HEAD after a failed base-commit attempt. */
 export async function restoreHeadPaths(repoRoot: string, paths: string[]): Promise<void> {
   await git(["reset", "--", ...paths], repoRoot);
   await gitOrThrow(["restore", "--source=HEAD", "--staged", "--worktree", "--", ...paths], repoRoot);
+  // The update preflight rejects pre-existing ignored/untracked files, so every
+  // remaining untracked path here was created by the failed upstream import.
+  await gitOrThrow(["clean", "-fdx", "--", ...paths], repoRoot);
 }
 
 /** Whether any selected path differs from HEAD after a successful base commit. */

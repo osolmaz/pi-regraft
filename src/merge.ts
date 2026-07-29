@@ -97,6 +97,35 @@ async function writeEntry(root: string, path: string, entry: TreeEntry): Promise
   await chmod(absolute, entry.executable ? 0o755 : 0o644);
 }
 
+function descendants(tree: Map<string, TreeEntry>, path: string): string[] {
+  const prefix = `${path}/`;
+  return [...tree.keys()].filter((candidate) => candidate.startsWith(prefix));
+}
+
+function subtreeMatches(
+  baseTree: Map<string, TreeEntry>,
+  localTree: Map<string, TreeEntry>,
+  path: string,
+): boolean {
+  const paths = new Set([...descendants(baseTree, path), ...descendants(localTree, path)]);
+  return [...paths].every((candidate) =>
+    sameEntry(baseTree.get(candidate), localTree.get(candidate)),
+  );
+}
+
+function ancestors(path: string): string[] {
+  const components = path.split("/");
+  const result: string[] = [];
+  for (let length = 1; length < components.length; length++) {
+    result.push(components.slice(0, length).join("/"));
+  }
+  return result;
+}
+
+type MergeAction =
+  | { type: "remove"; path: string }
+  | { type: "write"; path: string; entry: TreeEntry };
+
 /**
  * Merge upstream's base-to-new changes into the local tree in place.
  *
@@ -117,7 +146,40 @@ export async function threeWayMerge(
     readTree(upstreamDir),
   ]);
   const paths = new Set([...baseTree.keys(), ...localTree.keys(), ...upstreamTree.keys()]);
+  const blockedWrites = new Set<string>();
+  const conflicts = new Set<string>();
 
+  // A file or symlink replacing a directory may be written only when the local
+  // subtree still matches the base. Otherwise writing the parent would erase a
+  // committed local descendant.
+  for (const path of upstreamTree.keys()) {
+    if (descendants(baseTree, path).length > 0 && !subtreeMatches(baseTree, localTree, path)) {
+      blockedWrites.add(path);
+      conflicts.add(path);
+      for (const descendant of new Set([
+        ...descendants(baseTree, path),
+        ...descendants(localTree, path),
+      ])) {
+        if (!sameEntry(baseTree.get(descendant), localTree.get(descendant))) {
+          conflicts.add(descendant);
+        }
+      }
+    }
+
+    // A directory replacing a local file or symlink must also preserve a local
+    // change at that ancestor instead of deleting it while creating children.
+    for (const ancestor of ancestors(path)) {
+      const baseAncestor = baseTree.get(ancestor);
+      const localAncestor = localTree.get(ancestor);
+      if ((baseAncestor || localAncestor) && !sameEntry(baseAncestor, localAncestor)) {
+        blockedWrites.add(path);
+        conflicts.add(ancestor);
+        conflicts.add(path);
+      }
+    }
+  }
+
+  const actions: MergeAction[] = [];
   for (const path of paths) {
     const base = baseTree.get(path);
     const local = localTree.get(path);
@@ -126,12 +188,13 @@ export async function threeWayMerge(
     if (sameEntry(base, upstream) || sameEntry(local, upstream)) continue;
 
     if (sameEntry(base, local)) {
-      const absolute = join(localDir, ...path.split("/"));
       if (upstream === undefined) {
-        await rm(absolute, { recursive: true, force: true });
+        actions.push({ type: "remove", path });
         report.removed.push(path);
+      } else if (blockedWrites.has(path)) {
+        conflicts.add(path);
       } else {
-        await writeEntry(localDir, path, upstream);
+        actions.push({ type: "write", path, entry: upstream });
         if (local === undefined) report.added.push(path);
         else report.changed.push(path);
       }
@@ -139,7 +202,12 @@ export async function threeWayMerge(
     }
 
     if (upstream === undefined) {
-      report.conflicts.push(path);
+      conflicts.add(path);
+      continue;
+    }
+
+    if (blockedWrites.has(path)) {
+      conflicts.add(path);
       continue;
     }
 
@@ -151,20 +219,40 @@ export async function threeWayMerge(
       isBinary(local) ||
       isBinary(upstream)
     ) {
-      report.conflicts.push(path);
+      conflicts.add(path);
       continue;
     }
 
     const merged = await mergeFile(base.content, local.content, upstream.content);
-    await writeEntry(localDir, path, {
-      kind: "file",
-      content: merged.content,
-      executable: mergeExecutableBit(base.executable, local.executable, upstream.executable),
+    actions.push({
+      type: "write",
+      path,
+      entry: {
+        kind: "file",
+        content: merged.content,
+        executable: mergeExecutableBit(base.executable, local.executable, upstream.executable),
+      },
     });
-    if (merged.conflicted) report.conflicts.push(path);
+    if (merged.conflicted) conflicts.add(path);
     else report.changed.push(path);
   }
 
+  const depth = (path: string) => path.split("/").length;
+  const removals = actions
+    .filter((action): action is Extract<MergeAction, { type: "remove" }> => action.type === "remove")
+    .sort((a, b) => depth(b.path) - depth(a.path));
+  const writes = actions
+    .filter((action): action is Extract<MergeAction, { type: "write" }> => action.type === "write")
+    .sort((a, b) => depth(a.path) - depth(b.path));
+
+  for (const action of removals) {
+    await rm(join(localDir, ...action.path.split("/")), { recursive: true, force: true });
+  }
+  for (const action of writes) {
+    await writeEntry(localDir, action.path, action.entry);
+  }
+
+  report.conflicts = [...conflicts];
   return report;
 }
 
