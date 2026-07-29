@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -268,8 +268,9 @@ export async function findLocalBaseCommit(
       continue;
     }
 
-    const tree = await git(["cat-file", "-e", `${candidate}:${destGitPath}`], repoRoot);
-    if (tree.code === 0) return candidate;
+    // Git does not store empty directories, so a validated base commit may
+    // legitimately have no destination tree.
+    return candidate;
   }
 
   throw new Error(
@@ -299,7 +300,9 @@ export async function exportLocalTree(
     await gitOrThrow(["checkout", "--quiet", "--detach", commit], clone);
     const source = join(clone, ...gitPath.split("/"));
     if (!existsSync(source)) {
-      throw new Error(`graft path "${gitPath}" is missing from local base ${commit.slice(0, 12)}`);
+      const empty = join(workspace, "tree");
+      await mkdir(empty);
+      return empty;
     }
     return await copyTree(source, workspace);
   } catch (error) {

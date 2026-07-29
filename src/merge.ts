@@ -153,13 +153,15 @@ export async function threeWayMerge(
   // subtree still matches the base. Otherwise writing the parent would erase a
   // committed local descendant.
   for (const path of upstreamTree.keys()) {
-    if (descendants(baseTree, path).length > 0 && !subtreeMatches(baseTree, localTree, path)) {
+    const baseDescendants = descendants(baseTree, path);
+    const localDescendants = descendants(localTree, path);
+    if (
+      (baseDescendants.length > 0 || localDescendants.length > 0) &&
+      !subtreeMatches(baseTree, localTree, path)
+    ) {
       blockedWrites.add(path);
       conflicts.add(path);
-      for (const descendant of new Set([
-        ...descendants(baseTree, path),
-        ...descendants(localTree, path),
-      ])) {
+      for (const descendant of new Set([...baseDescendants, ...localDescendants])) {
         if (!sameEntry(baseTree.get(descendant), localTree.get(descendant))) {
           conflicts.add(descendant);
         }

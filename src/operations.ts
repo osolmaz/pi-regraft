@@ -255,9 +255,6 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
   await assertNoSymlinkComponents(context.repoRoot, destRel);
   await assertNoIgnoredPaths(context.repoRoot, destRel);
   const destAbs = join(context.projectRoot, ...destRel.split("/"));
-  if (!existsSync(destAbs)) {
-    throw new Error(`graft directory "${graft.dest}" is missing on disk`);
-  }
 
   const localBaseCommit = await findLocalBaseCommit(
     context.repoRoot,
