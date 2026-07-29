@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,5 +112,26 @@ describe("threeWayMerge", () => {
 
     expect(report.conflicts).toContain("keep.txt");
     expect(existsSync(join(local, "keep.txt"))).toBe(true);
+  });
+
+  it("applies upstream symlink additions", async () => {
+    await symlink("target.txt", join(upstream, "link.txt"));
+
+    const report = await threeWayMerge(base, local, upstream);
+
+    expect(report.added).toContain("link.txt");
+    expect(await readlink(join(local, "link.txt"))).toBe("target.txt");
+  });
+
+  it("handles an upstream directory-to-file replacement", async () => {
+    await put(base, "item/child.txt", "old\n");
+    await put(local, "item/child.txt", "old\n");
+    await put(upstream, "item", "new file\n");
+
+    const report = await threeWayMerge(base, local, upstream);
+
+    expect(report.removed).toContain("item/child.txt");
+    expect(report.added).toContain("item");
+    expect(await readFile(join(local, "item"), "utf8")).toBe("new file\n");
   });
 });

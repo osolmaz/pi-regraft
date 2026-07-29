@@ -146,6 +146,21 @@ export async function headCommit(repoRoot: string): Promise<string> {
   return (await gitOrThrow(["rev-parse", "HEAD"], repoRoot)).trim();
 }
 
+/** Refuse an update that would erase ignored, uncommitted files in a graft. */
+export async function assertNoIgnoredPaths(repoRoot: string, path: string): Promise<void> {
+  const output = await gitOrThrow(
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", path],
+    repoRoot,
+  );
+  const ignored = output.split("\0").filter(Boolean);
+  if (ignored.length === 0) return;
+  const sample = ignored.slice(0, 3).join(", ");
+  const remainder = ignored.length > 3 ? ` and ${ignored.length - 3} more` : "";
+  throw new Error(
+    `graft "${path}" contains ignored files that are not in the committed local copy: ${sample}${remainder}; move or remove them before updating`,
+  );
+}
+
 function validateTrailerValue(value: string, label: string): void {
   if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
     throw new Error(`${label} must be a non-empty single line`);

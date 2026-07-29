@@ -98,4 +98,20 @@ describe("parseSourceSpec", () => {
       subdir: ".",
     });
   });
+
+  it("keeps slashes in branch names", () => {
+    expect(parseSourceSpec("https://github.com/a/b.git@feature/local-bases#pkg")).toEqual({
+      url: "https://github.com/a/b.git",
+      ref: "feature/local-bases",
+      subdir: "pkg",
+    });
+  });
+
+  it("does not treat URL userinfo as a ref", () => {
+    expect(parseSourceSpec("https://user@github.com/a/b.git")).toEqual({
+      url: "https://user@github.com/a/b.git",
+      ref: "HEAD",
+      subdir: ".",
+    });
+  });
 });

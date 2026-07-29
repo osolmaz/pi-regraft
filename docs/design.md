@@ -63,7 +63,10 @@ workflow.
 
 `regraft update` also requires an attached branch and a clean worktree and
 index. The clean-state rule ensures L is fully represented by `HEAD` and stops
-the tool from committing unrelated changes.
+the tool from committing unrelated changes. Git normally hides ignored files
+from that check, so regraft checks the target graft separately and refuses to
+update while it contains ignored, uncommitted files. This prevents directory
+replacement from deleting generated local data.
 
 The update runs these steps:
 
@@ -124,12 +127,16 @@ For each path across B, L, and U:
 | same as local | unchanged | deleted | Delete locally |
 | absent | absent | added | Add upstream file |
 | edited | edited | edited text | Run `git merge-file` |
+| unchanged file mode | unchanged | executable bit changed | Take upstream mode |
+| unchanged symlink | unchanged | target changed | Take upstream target |
 | present | edited | deleted | Keep local and flag a conflict |
 | any | edited binary | edited binary | Keep local and flag a conflict |
+| any | conflicting type or symlink change | changed | Keep local and flag a conflict |
 
 Overlapping text changes use `<<<<<<< local`, `=======`, and `>>>>>>> upstream`
-markers. Delete/edit and binary conflicts are listed for manual or agent review
-even when a marker cannot represent the choice.
+markers. Clean executable-bit, symlink, and file-versus-directory changes apply
+directly. Delete/edit, binary, and conflicting entry-type changes are listed for
+manual or agent review even when a marker cannot represent the choice.
 
 ## Pi extension boundary
 
@@ -159,7 +166,8 @@ Contract impact:
 
 The first release supports Git sources, one tracked ref per graft, whole
 repositories or subdirectories, exact upstream pins, local base commits,
-three-way text merges, conflict reporting, status, and intent notes.
+three-way text merges, executable bits, symlinks, conflict reporting, status,
+and intent notes.
 
 Package-manager lockfile updates, npm-specific sources, Git LFS, submodules,
 binary merging, and reused conflict resolutions remain outside this release.
