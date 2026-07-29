@@ -237,6 +237,23 @@ describe("repository safety", () => {
     expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
   });
 
+  it("rolls the destination back when manifest writing fails", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+    await writeFile(join(upstream, "a.txt"), "a2\n");
+    await writeFile(join(upstream, "new.txt"), "new\n");
+    await commitUpstream("v2");
+    await chmod(manifestPath, 0o444);
+
+    await expect(updateGraft(manifestPath, "a")).rejects.toThrow();
+
+    expect(await readFile(join(project, "vendor/a/a.txt"), "utf8")).toBe("a1\n");
+    expect(existsSync(join(project, "vendor/a/new.txt"))).toBe(false);
+    expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
+  });
+
   it("refuses update while local edits are uncommitted", async () => {
     await writeFile(join(upstream, "a.txt"), "a1\n");
     await commitUpstream("v1");
@@ -293,17 +310,19 @@ describe("repository safety", () => {
     expect(existsSync(join(root, "outside"))).toBe(false);
   });
 
-  it("rejects destinations inside Git metadata", async () => {
+  it("rejects destinations inside Git metadata, including filesystem aliases", async () => {
     await writeFile(join(upstream, "hook"), "malicious\n");
     await commitUpstream("v1");
 
-    await expect(
-      addGraft({
-        manifestPath: join(project, "regraft.json"),
-        spec: `${upstream}@main`,
-        dest: ".git/hooks",
-      }),
-    ).rejects.toThrow("must not include a .git directory");
+    for (const dest of [".git/hooks", ".GIT/hooks", ".git./hooks", ".git /hooks"]) {
+      await expect(
+        addGraft({
+          manifestPath: join(project, "regraft.json"),
+          spec: `${upstream}@main`,
+          dest,
+        }),
+      ).rejects.toThrow("must not include a .git directory");
+    }
   });
 
   it("rejects destination parents that are symlinks", async () => {

@@ -72,7 +72,9 @@ function safeRelativePath(path: string, label: string, allowDot = false): string
     throw new Error(`${label} must stay inside its root, got "${path}"`);
   }
   const components = cleaned.split(sep);
-  if (components.includes(".git")) {
+  const aliasesGitMetadata = (component: string): boolean =>
+    component.replace(/[ .]+$/u, "").toLowerCase() === ".git";
+  if (components.some(aliasesGitMetadata)) {
     throw new Error(`${label} must not include a .git directory`);
   }
   return components.join("/");
@@ -309,11 +311,10 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
     const updated: Graft = { ...graft, commit: newCommit };
     const updatedManifest: Manifest = upsertGraft(manifest, updated);
 
-    await replaceDir(upstreamTree, destAbs);
-    await writeManifest(manifestPath, updatedManifest);
-
     let newBaseCommit: string;
     try {
+      await replaceDir(upstreamTree, destAbs);
+      await writeManifest(manifestPath, updatedManifest);
       newBaseCommit = await commitLocalBase(
         context.repoRoot,
         [context.manifestGitPath, destRel],
@@ -321,7 +322,13 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
         newCommit,
       );
     } catch (error) {
-      await restoreHeadPaths(context.repoRoot, [context.manifestGitPath, destRel]);
+      try {
+        await restoreHeadPaths(context.repoRoot, [context.manifestGitPath, destRel]);
+      } catch (rollbackError) {
+        throw new Error(
+          `regraft update failed (${(error as Error).message}) and rollback also failed: ${(rollbackError as Error).message}`,
+        );
+      }
       throw error;
     }
 
