@@ -399,6 +399,16 @@ export async function restoreHeadPaths(repoRoot: string, paths: string[]): Promi
   if (restoreError) throw restoreError;
 }
 
+/** Remove a newly created base commit and restore selected paths from the old HEAD. */
+export async function rollbackLocalBase(
+  repoRoot: string,
+  previousHead: string,
+  paths: string[],
+): Promise<void> {
+  await gitOrThrow(["reset", "--soft", previousHead], repoRoot);
+  await restoreHeadPaths(repoRoot, paths);
+}
+
 /** Whether any selected path differs from HEAD after a successful base commit. */
 export async function pathsDirty(repoRoot: string, paths: string[]): Promise<boolean> {
   const out = await gitOrThrow(

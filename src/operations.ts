@@ -22,6 +22,7 @@ import {
   repositoryRoot,
   resolveRef,
   restoreHeadPaths,
+  rollbackLocalBase,
 } from "./git.ts";
 import { replaceDir, threeWayMerge, type MergeReport } from "./merge.ts";
 
@@ -335,9 +336,19 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
     try {
       await replaceDir(localTree, destAbs);
     } catch (error) {
-      await restoreHeadPaths(context.repoRoot, [destRel]);
+      try {
+        await rollbackLocalBase(
+          context.repoRoot,
+          localHead,
+          [context.manifestGitPath, destRel],
+        );
+      } catch (rollbackError) {
+        throw new Error(
+          `created local base ${newBaseCommit.slice(0, 12)} but could not restore the merged overlay (${(error as Error).message}) or roll the base back: ${(rollbackError as Error).message}`,
+        );
+      }
       throw new Error(
-        `created local base ${newBaseCommit.slice(0, 12)} but could not restore the merged overlay: ${(error as Error).message}`,
+        `could not restore the merged overlay; reverted local base ${newBaseCommit.slice(0, 12)}: ${(error as Error).message}`,
       );
     }
 
