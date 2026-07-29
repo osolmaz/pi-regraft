@@ -38,15 +38,28 @@ async function gitOrThrow(args: string[], cwd?: string): Promise<string> {
   return stdout;
 }
 
+const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 /** Resolve a remote ref to one unambiguous commit id without cloning. */
 export async function resolveRef(url: string, ref: string): Promise<string> {
-  const out = await gitOrThrow(["ls-remote", "--", url, ref, `${ref}^{}`]);
+  if (OBJECT_ID_PATTERN.test(ref)) return ref;
+
+  const names =
+    ref === "HEAD" || ref.startsWith("refs/")
+      ? [ref]
+      : [`refs/heads/${ref}`, `refs/tags/${ref}`];
+  const patterns = names.flatMap((name) => [name, `${name}^{}`]);
+  const out = await gitOrThrow(["ls-remote", "--", url, ...patterns]);
   const records = out
     .split("\n")
     .filter(Boolean)
     .map((line) => {
       const [objectId, name] = line.split(/\s+/, 2);
       return { objectId, name };
+    })
+    .filter((record) => {
+      const baseName = record.name?.endsWith("^{}") ? record.name.slice(0, -3) : record.name;
+      return baseName !== undefined && names.includes(baseName);
     });
   const refs = records.filter((record) => record.name && !record.name.endsWith("^{}"));
   if (refs.length === 0) throw new Error(`ref "${ref}" not found on ${url}`);
@@ -57,7 +70,7 @@ export async function resolveRef(url: string, ref: string): Promise<string> {
   const selected = refs[0]!;
   const peeled = records.find((record) => record.name === `${selected.name}^{}`);
   const commit = peeled?.objectId ?? selected.objectId;
-  if (!commit || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
+  if (!commit || !OBJECT_ID_PATTERN.test(commit)) {
     throw new Error(`could not resolve "${ref}" on ${url} to a commit`);
   }
   return commit;
