@@ -4,11 +4,11 @@
  * Vendor code from an upstream git repo into your project as plain files, then
  * re-pull upstream changes without losing your local edits.
  *
- * The `/regraft` command drives a deterministic core (resolve ref, fetch base
- * and upstream, three-way merge). Git does the mechanical merge and leaves
- * standard conflict markers in the files. When a merge conflicts, the agent in
- * the current session receives a brief listing the conflicted files and your
- * recorded intent, and resolves them — then you run your own tests.
+ * The `/regraft` command drives a deterministic core. Every pristine upstream
+ * base is committed in the consumer repository; updates read the old base from
+ * that local commit, fetch only the new upstream tree, and three-way merge. Git
+ * does the mechanical merge. When judgment is needed, the current Pi agent gets
+ * the affected files and recorded intent, then resolves them and runs tests.
  */
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -45,9 +45,9 @@ function conflictBrief(result: UpdateResult): string {
   const { graft, report, previousCommit, newCommit } = result;
   const conflicts = report?.conflicts ?? [];
   const lines: string[] = [
-    `regraft updated "${graft.name}" from ${shortSha(previousCommit)} to ${shortSha(newCommit)} with conflicts.`,
+    `regraft committed pristine upstream base ${shortSha(result.newBaseCommit!)} for "${graft.name}" (${shortSha(previousCommit)} -> ${shortSha(newCommit)}) and restored the local overlay with conflicts.`,
     "",
-    `Files with conflict markers (<<<<<<< local / ======= / >>>>>>> upstream) under ${graft.dest}:`,
+    `Files requiring resolution under ${graft.dest} (overlapping text edits contain <<<<<<< local / ======= / >>>>>>> upstream markers):`,
     ...conflicts.map((f) => `  - ${join(graft.dest, f)}`),
   ];
   if (graft.notes.length > 0) {
@@ -75,17 +75,23 @@ async function runAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext, rest: stri
   }
   const dest = parts[1];
   try {
-    const { graft } = await addGraft({ manifestPath: manifestPath(ctx.cwd), spec, dest });
+    const { graft, baseCommit } = await addGraft({
+      manifestPath: manifestPath(ctx.cwd),
+      spec,
+      dest,
+    });
     ctx.ui.notify(
-      `regraft: added "${graft.name}" -> ${graft.dest} at ${shortSha(graft.commit)}`,
+      `regraft: added "${graft.name}" -> ${graft.dest}; local base ${shortSha(baseCommit)}`,
       "info",
     );
     pi.sendUserMessage(
       [
         `Vendored "${graft.name}" from ${graft.source.url} (${graft.source.ref}) into ${graft.dest}.`,
+        `The pristine copy and regraft.json are committed locally as ${shortSha(baseCommit)}.`,
         "",
-        "Recommended: commit these pristine files first, then make your local edits as a",
-        "separate commit, so the original copy stays recoverable from git history. Use",
+        "Make local edits now and commit them normally. Before every update, the worktree",
+        "must be clean. Regraft will read its merge base from this repository's history,",
+        "not from the old upstream commit. Use",
         `\`/regraft note ${graft.name} <why>\` to record the intent behind each edit.`,
       ].join("\n"),
       { deliverAs: "followUp" },
@@ -114,12 +120,15 @@ async function runUpdate(
     const report = result.report!;
     if (report.conflicts.length === 0) {
       const summary = `${report.changed.length} changed, ${report.added.length} added, ${report.removed.length} removed`;
+      const base = shortSha(result.newBaseCommit!);
       ctx.ui.notify(
-        `regraft: updated "${name}" to ${shortSha(result.newCommit)} cleanly (${summary})`,
+        `regraft: committed local base ${base} for "${name}" (${summary})`,
         "info",
       );
       pi.sendUserMessage(
-        `regraft updated "${name}" to ${shortSha(result.newCommit)} with no conflicts (${summary}). Run this project's tests or checks to confirm the merge before committing.`,
+        result.overlayPending
+          ? `regraft committed pristine upstream base ${base} for "${name}" at ${shortSha(result.newCommit)}, then restored the merged local overlay in the worktree (${summary}). Run this project's tests or checks and commit the overlay.`
+          : `regraft committed pristine upstream base ${base} for "${name}" at ${shortSha(result.newCommit)} (${summary}). There was no local overlay to restore, so the worktree is clean. Run this project's tests or checks to confirm the update.`,
         { deliverAs: "followUp" },
       );
       return;
@@ -145,7 +154,7 @@ async function runStatus(ctx: ExtensionCommandContext): Promise<void> {
       const state = e.behind
         ? `behind (latest ${shortSha(e.latestCommit)})`
         : "up to date";
-      return `${e.graft.name} @ ${shortSha(e.graft.commit)} — ${state}`;
+      return `${e.graft.name} @ ${shortSha(e.graft.commit)} (local base ${shortSha(e.localBaseCommit)}) — ${state}`;
     });
     ctx.ui.notify(`regraft status:\n${lines.join("\n")}`, "info");
   } catch (err) {
