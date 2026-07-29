@@ -311,6 +311,40 @@ describe("repository safety", () => {
     expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
   });
 
+  it("removes a new base commit when merged-overlay restoration fails", async () => {
+    await writeFile(join(upstream, "a.txt"), "one\ntwo\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    const added = await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+    await writeFile(join(project, "vendor/a/a.txt"), "one\ntwo\nlocal\n");
+    await commitProject("feat: local overlay");
+    const localHead = (await g(["rev-parse", "HEAD"], project)).trim();
+
+    await writeFile(join(upstream, "a.txt"), "ONE\ntwo\n");
+    await commitUpstream("v2");
+    const isolatedTmp = join(root, "hook-tmp");
+    await mkdir(isolatedTmp);
+    const hook = join(project, ".git/hooks/post-commit");
+    await writeFile(hook, '#!/bin/sh\nrm -rf "$TMPDIR"/regraft-local-*/tree\n');
+    await chmod(hook, 0o755);
+    const previousTmp = process.env.TMPDIR;
+    process.env.TMPDIR = isolatedTmp;
+
+    try {
+      await expect(updateGraft(manifestPath, "a")).rejects.toThrow("reverted local base");
+    } finally {
+      if (previousTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmp;
+    }
+
+    expect((await g(["rev-parse", "HEAD"], project)).trim()).toBe(localHead);
+    expect(await readFile(join(project, "vendor/a/a.txt"), "utf8")).toBe("one\ntwo\nlocal\n");
+    expect(JSON.parse(await readFile(manifestPath, "utf8")).grafts[0].commit).toBe(
+      added.graft.commit,
+    );
+    expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
+  });
+
   it("refuses update while local edits are uncommitted", async () => {
     await writeFile(join(upstream, "a.txt"), "a1\n");
     await commitUpstream("v1");
