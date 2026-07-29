@@ -1,5 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { lstat, readFile, writeFile } from "node:fs/promises";
 
 export const MANIFEST_FILE = "regraft.json";
 export const MANIFEST_VERSION = 1 as const;
@@ -43,8 +42,23 @@ export function emptyManifest(): Manifest {
   return { version: MANIFEST_VERSION, grafts: [] };
 }
 
+async function manifestExists(path: string): Promise<boolean> {
+  const metadata = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!metadata) return false;
+  if (metadata.isSymbolicLink()) {
+    throw new Error(`${MANIFEST_FILE} must not be a symbolic link`);
+  }
+  if (!metadata.isFile()) {
+    throw new Error(`${MANIFEST_FILE} must be a regular file`);
+  }
+  return true;
+}
+
 export async function readManifest(path: string): Promise<Manifest> {
-  if (!existsSync(path)) return emptyManifest();
+  if (!(await manifestExists(path))) return emptyManifest();
   const raw = await readFile(path, "utf8");
   const parsed = JSON.parse(raw) as Manifest;
   if (parsed.version !== MANIFEST_VERSION) {
@@ -59,6 +73,7 @@ export async function readManifest(path: string): Promise<Manifest> {
 }
 
 export async function writeManifest(path: string, manifest: Manifest): Promise<void> {
+  await manifestExists(path);
   const sorted: Manifest = {
     version: manifest.version,
     grafts: [...manifest.grafts].sort((a, b) => a.name.localeCompare(b.name)),
