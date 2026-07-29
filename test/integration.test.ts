@@ -452,6 +452,34 @@ describe("repository safety", () => {
 });
 
 describe("source selection", () => {
+  it("ignores remote-tracking aliases when resolving a short branch name", async () => {
+    await writeFile(join(upstream, "a.txt"), "branch\n");
+    await commitUpstream("v1");
+    await g(["update-ref", "refs/remotes/origin/main", "HEAD"], upstream);
+
+    const { graft } = await addGraft({
+      manifestPath: join(project, "regraft.json"),
+      spec: `${upstream}@main`,
+      dest: "vendor/a",
+    });
+
+    expect(graft.commit).toBe((await g(["rev-parse", "HEAD"], upstream)).trim());
+  });
+
+  it("accepts an exact commit as the tracked ref", async () => {
+    await writeFile(join(upstream, "a.txt"), "pinned\n");
+    await commitUpstream("v1");
+    const commit = (await g(["rev-parse", "HEAD"], upstream)).trim();
+
+    const { graft } = await addGraft({
+      manifestPath: join(project, "regraft.json"),
+      spec: `${upstream}@${commit}`,
+      dest: "vendor/a",
+    });
+
+    expect(graft.commit).toBe(commit);
+  });
+
   it("peels annotated tags to their commit", async () => {
     await writeFile(join(upstream, "a.txt"), "tagged\n");
     await commitUpstream("v1");
