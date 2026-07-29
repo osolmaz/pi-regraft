@@ -86,6 +86,23 @@ function validateName(name: string): void {
   }
 }
 
+function assertNoEmbeddedCredentials(sourceUrl: string): void {
+  try {
+    const parsed = new URL(sourceUrl);
+    const httpUserinfo =
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      (parsed.username.length > 0 || parsed.password.length > 0);
+    if (httpUserinfo || parsed.password.length > 0) {
+      throw new Error(
+        "source URLs must not contain credentials; use a configured Git credential helper or SSH key",
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("source URLs must not")) throw error;
+    // Local paths and scp-like SSH URLs are not WHATWG URLs.
+  }
+}
+
 function assertDestinationSeparateFromManifest(dest: string, manifestPath: string): void {
   if (
     dest === manifestPath ||
@@ -167,6 +184,7 @@ export async function addGraft(options: AddOptions): Promise<AddResult> {
 
   const parsed = parseSourceSpec(options.spec);
   if (!parsed.url) throw new Error("source URL must not be empty");
+  assertNoEmbeddedCredentials(parsed.url);
   const subdir = safeRelativePath(parsed.subdir, "source subdirectory", true);
   const destRel = safeRelativePath(options.dest ?? defaultDest(parsed.url, subdir), "destination");
   const name = options.name ?? destRel.split("/").filter(Boolean).pop() ?? destRel;
@@ -249,6 +267,7 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
   const manifest = await readManifest(manifestPath);
   const graft = findGraft(manifest, name);
   if (!graft) throw new Error(`no graft named "${name}"`);
+  assertNoEmbeddedCredentials(graft.source.url);
   const destRel = safeRelativePath(graft.dest, "destination");
   assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
   const subdir = safeRelativePath(graft.source.subdir, "source subdirectory", true);
@@ -348,6 +367,7 @@ export async function status(manifestPath: string): Promise<StatusEntry[]> {
   const entries: StatusEntry[] = [];
   for (const graft of manifest.grafts) {
     validateName(graft.name);
+    assertNoEmbeddedCredentials(graft.source.url);
     const destRel = safeRelativePath(graft.dest, "destination");
     assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
     const [latestCommit, localBaseCommit] = await Promise.all([

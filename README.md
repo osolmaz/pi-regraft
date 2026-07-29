@@ -30,6 +30,7 @@ Run `pi-regraft` at the root of a Git repository. `add` and `update` require:
 - an attached branch
 - a clean worktree and index
 - a configured Git author for the base commits
+- Git authentication from a credential helper or SSH key, never embedded in the source URL
 - no ignored, uncommitted files inside the graft being updated
 
 The ignored-file check prevents an update from erasing generated local data that

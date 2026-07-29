@@ -183,7 +183,10 @@ export async function commitLocalBase(
   }
   // A pristine base must include upstream files even when consumer ignore rules
   // match their destination paths.
-  const staged = await git(["add", "-f", "--", ...paths], repoRoot);
+  const staged = await git(
+    ["-c", "core.fileMode=true", "add", "-f", "--", ...paths],
+    repoRoot,
+  );
   if (staged.code !== 0) {
     await git(["reset", "--", ...paths], repoRoot);
     throw new Error(
