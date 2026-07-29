@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -248,6 +248,40 @@ describe("repository safety", () => {
       }),
     ).rejects.toThrow("must not include a .git directory");
   });
+
+  it("rejects destination parents that are symlinks", async () => {
+    await writeFile(join(upstream, "a.txt"), "a\n");
+    await commitUpstream("v1");
+    const external = join(root, "external");
+    await mkdir(external);
+    await symlink(external, join(project, "vendor"), "dir");
+    await commitProject("chore: link vendor directory");
+
+    await expect(
+      addGraft({
+        manifestPath: join(project, "regraft.json"),
+        spec: `${upstream}@main`,
+        dest: "vendor/tool",
+      }),
+    ).rejects.toThrow("passes through symlink");
+    expect(existsSync(join(external, "tool"))).toBe(false);
+  });
+
+  it("refuses to erase ignored files inside a graft", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+    await writeFile(join(project, ".gitignore"), "vendor/a/generated.log\n");
+    await commitProject("chore: ignore generated graft output");
+    const ignored = join(project, "vendor/a/generated.log");
+    await writeFile(ignored, "keep me\n");
+    await writeFile(join(upstream, "a.txt"), "a2\n");
+    await commitUpstream("v2");
+
+    await expect(updateGraft(manifestPath, "a")).rejects.toThrow("contains ignored files");
+    expect(await readFile(ignored, "utf8")).toBe("keep me\n");
+  });
 });
 
 describe("source selection", () => {
@@ -259,6 +293,22 @@ describe("source selection", () => {
 
     const result = await updateGraft(manifestPath, "a");
     expect(result.upToDate).toBe(true);
+  });
+
+  it("preserves upstream executable-bit changes", async () => {
+    const script = join(upstream, "run.sh");
+    await writeFile(script, "#!/bin/sh\necho ok\n");
+    await chmod(script, 0o644);
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/tool" });
+
+    await chmod(script, 0o755);
+    await commitUpstream("make executable");
+    const result = await updateGraft(manifestPath, "tool");
+
+    expect(result.overlayPending).toBe(false);
+    expect((await lstat(join(project, "vendor/tool/run.sh"))).mode & 0o111).not.toBe(0);
   });
 
   it("vendors only a subdirectory when requested", async () => {

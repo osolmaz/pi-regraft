@@ -1,66 +1,109 @@
-import { readdir, readFile, writeFile, mkdir, mkdtemp, rm, cp } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { git } from "./git.ts";
 
 export interface MergeReport {
-  /** Files whose content changed in the destination as a result of the merge. */
+  /** Files whose content, link target, or executable bit changed. */
   changed: string[];
-  /** Files newly added from upstream. */
+  /** Paths newly added from upstream. */
   added: string[];
-  /** Files removed because upstream deleted them and you had not touched them. */
+  /** Paths removed because upstream deleted them and local did not change them. */
   removed: string[];
-  /** Files left with conflict markers for a human or agent to resolve. */
+  /** Paths that require a human or agent choice. */
   conflicts: string[];
 }
 
-/** List every file (recursively) under `dir`, as paths relative to `dir`. */
-async function listFiles(dir: string): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (!existsSync(dir)) return out;
+type TreeEntry =
+  | { kind: "file"; content: Buffer; executable: boolean }
+  | { kind: "symlink"; target: string };
+
+/** Read Git-trackable file and symlink entries below `dir`. */
+async function readTree(dir: string): Promise<Map<string, TreeEntry>> {
+  const entries = new Map<string, TreeEntry>();
+  if (!existsSync(dir)) return entries;
+
   async function walk(current: string): Promise<void> {
     for (const entry of await readdir(current, { withFileTypes: true })) {
       if (entry.name === ".git") continue;
-      const abs = join(current, entry.name);
+      const absolute = join(current, entry.name);
+      const path = relative(dir, absolute).split(sep).join("/");
       if (entry.isDirectory()) {
-        await walk(abs);
+        await walk(absolute);
+      } else if (entry.isSymbolicLink()) {
+        entries.set(path, { kind: "symlink", target: await readlink(absolute) });
       } else if (entry.isFile()) {
-        out.add(relative(dir, abs).split(sep).join("/"));
+        const metadata = await lstat(absolute);
+        entries.set(path, {
+          kind: "file",
+          content: await readFile(absolute),
+          executable: (metadata.mode & 0o111) !== 0,
+        });
       }
     }
   }
+
   await walk(dir);
-  return out;
+  return entries;
 }
 
-async function readMaybe(dir: string, rel: string): Promise<Buffer | undefined> {
-  const abs = join(dir, rel);
-  if (!existsSync(abs)) return undefined;
-  return readFile(abs);
-}
-
-function isBinary(buf: Buffer | undefined): boolean {
-  if (!buf) return false;
-  const n = Math.min(buf.length, 8000);
-  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+function sameEntry(a: TreeEntry | undefined, b: TreeEntry | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "symlink" && b.kind === "symlink") return a.target === b.target;
+  if (a.kind === "file" && b.kind === "file") {
+    return a.executable === b.executable && a.content.equals(b.content);
+  }
   return false;
 }
 
-function eq(a: Buffer | undefined, b: Buffer | undefined): boolean {
-  if (a === undefined || b === undefined) return a === b;
-  return a.equals(b);
+function isBinary(entry: TreeEntry | undefined): boolean {
+  if (entry?.kind !== "file") return false;
+  const length = Math.min(entry.content.length, 8000);
+  for (let index = 0; index < length; index++) {
+    if (entry.content[index] === 0) return true;
+  }
+  return false;
+}
+
+function mergeExecutableBit(base: boolean, local: boolean, upstream: boolean): boolean {
+  if (local === base) return upstream;
+  if (upstream === base) return local;
+  return local;
+}
+
+async function writeEntry(root: string, path: string, entry: TreeEntry): Promise<void> {
+  const absolute = join(root, ...path.split("/"));
+  await rm(absolute, { recursive: true, force: true });
+  await mkdir(dirname(absolute), { recursive: true });
+  if (entry.kind === "symlink") {
+    await symlink(entry.target, absolute);
+    return;
+  }
+  await writeFile(absolute, entry.content);
+  await chmod(absolute, entry.executable ? 0o755 : 0o644);
 }
 
 /**
- * Merge upstream's base->new changes into the local copy, in place.
+ * Merge upstream's base-to-new changes into the local tree in place.
  *
- * `base` is the tree the local copy was originally taken from, `local` is the
- * destination directory holding your current (possibly edited) files, and
- * `upstream` is the new upstream tree. On return, `local` contains the merged
- * result; conflicts are written as standard `<<<<<<< / ======= / >>>>>>>`
- * markers so the same resolution tools (and the Pi agent) that handle git
- * conflicts apply here too.
+ * `baseDir` and `localDir` come from commits in the consumer repository.
+ * `upstreamDir` is the newly fetched upstream tree. Text conflicts get normal
+ * Git markers. Binary, symlink, type-change, and delete/edit conflicts keep the
+ * local entry and are listed in the report.
  */
 export async function threeWayMerge(
   baseDir: string,
@@ -68,69 +111,64 @@ export async function threeWayMerge(
   upstreamDir: string,
 ): Promise<MergeReport> {
   const report: MergeReport = { changed: [], added: [], removed: [], conflicts: [] };
+  const [baseTree, localTree, upstreamTree] = await Promise.all([
+    readTree(baseDir),
+    readTree(localDir),
+    readTree(upstreamDir),
+  ]);
+  const paths = new Set([...baseTree.keys(), ...localTree.keys(), ...upstreamTree.keys()]);
 
-  const paths = new Set<string>();
-  for (const p of await listFiles(baseDir)) paths.add(p);
-  for (const p of await listFiles(localDir)) paths.add(p);
-  for (const p of await listFiles(upstreamDir)) paths.add(p);
+  for (const path of paths) {
+    const base = baseTree.get(path);
+    const local = localTree.get(path);
+    const upstream = upstreamTree.get(path);
 
-  for (const rel of paths) {
-    const base = await readMaybe(baseDir, rel);
-    const local = await readMaybe(localDir, rel);
-    const upstream = await readMaybe(upstreamDir, rel);
+    if (sameEntry(base, upstream) || sameEntry(local, upstream)) continue;
 
-    // Upstream made no change to this path: nothing to do, keep local as-is.
-    if (eq(base, upstream)) continue;
-
-    // You never touched this path (local matches base): take upstream verbatim.
-    if (eq(base, local)) {
+    if (sameEntry(base, local)) {
+      const absolute = join(localDir, ...path.split("/"));
       if (upstream === undefined) {
-        await rm(join(localDir, rel), { force: true });
-        report.removed.push(rel);
+        await rm(absolute, { recursive: true, force: true });
+        report.removed.push(path);
       } else {
-        await writeFileEnsured(join(localDir, rel), upstream);
-        if (local === undefined) report.added.push(rel);
-        else report.changed.push(rel);
+        await writeEntry(localDir, path, upstream);
+        if (local === undefined) report.added.push(path);
+        else report.changed.push(path);
       }
       continue;
     }
 
-    // Both sides diverged from base. Upstream deleted, you edited: keep yours,
-    // but flag it so the change is not silently dropped.
     if (upstream === undefined) {
-      report.conflicts.push(rel);
+      report.conflicts.push(path);
       continue;
     }
 
-    // Both sides changed and one side is binary: cannot text-merge. Keep local
-    // and flag as a conflict for manual selection.
-    if (isBinary(base) || isBinary(local) || isBinary(upstream)) {
-      report.conflicts.push(rel);
+    if (
+      base?.kind !== "file" ||
+      local?.kind !== "file" ||
+      upstream.kind !== "file" ||
+      isBinary(base) ||
+      isBinary(local) ||
+      isBinary(upstream)
+    ) {
+      report.conflicts.push(path);
       continue;
     }
 
-    const merged = await mergeFile(
-      base ?? Buffer.alloc(0),
-      local ?? Buffer.alloc(0),
-      upstream,
-    );
-    await writeFileEnsured(join(localDir, rel), merged.content);
-    if (merged.conflicted) report.conflicts.push(rel);
-    else report.changed.push(rel);
+    const merged = await mergeFile(base.content, local.content, upstream.content);
+    await writeEntry(localDir, path, {
+      kind: "file",
+      content: merged.content,
+      executable: mergeExecutableBit(base.executable, local.executable, upstream.executable),
+    });
+    if (merged.conflicted) report.conflicts.push(path);
+    else report.changed.push(path);
   }
 
   return report;
 }
 
-async function writeFileEnsured(abs: string, data: Buffer): Promise<void> {
-  await mkdir(dirname(abs), { recursive: true });
-  await writeFile(abs, data);
-}
-
-/**
- * Three-way merge a single text file via `git merge-file`, using a temp
- * directory so nothing touches the destination until we have a result.
- */
+/** Three-way merge one text file via `git merge-file`. */
 async function mergeFile(
   base: Buffer,
   local: Buffer,
@@ -144,8 +182,7 @@ async function mergeFile(
     await writeFile(localPath, local);
     await writeFile(basePath, base);
     await writeFile(upstreamPath, upstream);
-    // merge-file rewrites <current> (local) with base->other (upstream) changes.
-    const res = await git([
+    const result = await git([
       "merge-file",
       "-L",
       "local",
@@ -157,17 +194,19 @@ async function mergeFile(
       basePath,
       upstreamPath,
     ]);
-    const content = await readFile(localPath);
-    // Exit code >0 is the number of conflict hunks; <0 is an error.
-    return { content, conflicted: res.code > 0 };
+    // Git reports -1 on an internal error, which process exit status exposes as 255.
+    if (result.code < 0 || result.code === 255) {
+      throw new Error(`git merge-file failed: ${result.stderr.trim() || result.stdout.trim()}`);
+    }
+    return { content: await readFile(localPath), conflicted: result.code > 0 };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-/** Copy an exported tree into a destination directory, replacing its contents. */
+/** Replace a file tree while preserving executable bits and symlinks. */
 export async function replaceDir(src: string, dest: string): Promise<void> {
   await rm(dest, { recursive: true, force: true });
   await mkdir(dirname(dest), { recursive: true });
-  await cp(src, dest, { recursive: true });
+  await cp(src, dest, { recursive: true, preserveTimestamps: true });
 }

@@ -30,6 +30,10 @@ Run `pi-regraft` at the root of a Git repository. `add` and `update` require:
 - an attached branch
 - a clean worktree and index
 - a configured Git author for the base commits
+- no ignored, uncommitted files inside the graft being updated
+
+The ignored-file check prevents an update from erasing generated local data that
+is absent from Git history. Move or remove those files before updating.
 
 Keep the base commits in branch history. Rebasing them is fine, but squashing or
 dropping them removes the local merge base and blocks later updates.
@@ -84,7 +88,8 @@ If there are no local changes to reapply, the new base commit is the complete
 update and the worktree stays clean. Otherwise, run the project checks and
 commit the restored overlay. Conflicting text edits contain normal Git conflict
 markers. Pi receives the affected file list and your intent notes so it can help
-resolve them.
+resolve them. Clean upstream changes to executable bits, symlink targets, and
+file-versus-directory layout are preserved.
 
 The update never fetches the old pinned commit from upstream. It fails if the
 matching local base commit is missing.

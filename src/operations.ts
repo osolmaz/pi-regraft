@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import {
   findGraft,
@@ -10,6 +10,7 @@ import {
   type Manifest,
 } from "./manifest.ts";
 import {
+  assertNoIgnoredPaths,
   assertRepositoryReady,
   commitLocalBase,
   exportLocalTree,
@@ -24,6 +25,24 @@ import {
 } from "./git.ts";
 import { replaceDir, threeWayMerge, type MergeReport } from "./merge.ts";
 
+function refSeparator(spec: string): number {
+  const lastAt = spec.lastIndexOf("@");
+  if (lastAt === -1) return -1;
+
+  const scheme = spec.indexOf("://");
+  if (scheme !== -1) {
+    const pathStart = spec.indexOf("/", scheme + 3);
+    return pathStart !== -1 && lastAt > pathStart ? lastAt : -1;
+  }
+
+  const firstAt = spec.indexOf("@");
+  const hostColon = firstAt === -1 ? -1 : spec.indexOf(":", firstAt + 1);
+  const firstSlash = spec.indexOf("/");
+  const scpLike = firstAt > 0 && hostColon > firstAt && (firstSlash === -1 || hostColon < firstSlash);
+  if (scpLike && lastAt === firstAt) return -1;
+  return lastAt;
+}
+
 /** Parse `url[@ref][#subdir]` into its parts, defaulting ref=HEAD, subdir=".". */
 export function parseSourceSpec(spec: string): { url: string; ref: string; subdir: string } {
   let rest = spec;
@@ -34,8 +53,7 @@ export function parseSourceSpec(spec: string): { url: string; ref: string; subdi
     rest = rest.slice(0, hash);
   }
   let ref = "HEAD";
-  const lastSlash = rest.lastIndexOf("/");
-  const at = rest.indexOf("@", lastSlash + 1);
+  const at = refSeparator(rest);
   if (at !== -1) {
     ref = rest.slice(at + 1) || "HEAD";
     rest = rest.slice(0, at);
@@ -92,6 +110,21 @@ async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0;
 }
 
+async function assertNoSymlinkComponents(root: string, path: string): Promise<void> {
+  let current = root;
+  for (const component of path.split("/")) {
+    current = join(current, component);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error(`destination "${path}" passes through symlink ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
 interface RepositoryContext {
   projectRoot: string;
   repoRoot: string;
@@ -140,6 +173,7 @@ export async function addGraft(options: AddOptions): Promise<AddResult> {
   validateName(name);
 
   assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
+  await assertNoSymlinkComponents(context.repoRoot, destRel);
   const destAbs = join(context.projectRoot, ...destRel.split("/"));
   const destExisted = existsSync(destAbs);
   if (!(await isEmptyDir(destAbs))) {
@@ -218,6 +252,8 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
   const destRel = safeRelativePath(graft.dest, "destination");
   assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
   const subdir = safeRelativePath(graft.source.subdir, "source subdirectory", true);
+  await assertNoSymlinkComponents(context.repoRoot, destRel);
+  await assertNoIgnoredPaths(context.repoRoot, destRel);
   const destAbs = join(context.projectRoot, ...destRel.split("/"));
   if (!existsSync(destAbs)) {
     throw new Error(`graft directory "${graft.dest}" is missing on disk`);
