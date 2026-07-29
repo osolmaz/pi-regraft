@@ -262,6 +262,23 @@ describe("repository safety", () => {
     await expect(updateGraft(manifestPath, "a")).rejects.toThrow("no committed local base");
   });
 
+  it("rejects credential-bearing source URLs without echoing the secret", async () => {
+    let message = "";
+    try {
+      await addGraft({
+        manifestPath: join(project, "regraft.json"),
+        spec: "https://user:super-secret@example.com/repo.git@main",
+        dest: "vendor/a",
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("must not contain credentials");
+    expect(message).not.toContain("super-secret");
+    expect(existsSync(join(project, "regraft.json"))).toBe(false);
+  });
+
   it("rejects destinations outside the repository", async () => {
     await writeFile(join(upstream, "a.txt"), "a\n");
     await commitUpstream("v1");
@@ -363,6 +380,7 @@ describe("source selection", () => {
     await commitUpstream("v1");
     const manifestPath = join(project, "regraft.json");
     await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/tool" });
+    await g(["config", "core.fileMode", "false"], project);
 
     await chmod(script, 0o755);
     await commitUpstream("make executable");
@@ -370,6 +388,9 @@ describe("source selection", () => {
 
     expect(result.overlayPending).toBe(false);
     expect((await lstat(join(project, "vendor/tool/run.sh"))).mode & 0o111).not.toBe(0);
+    expect(await g(["ls-tree", result.newBaseCommit!, "vendor/tool/run.sh"], project)).toMatch(
+      /^100755 /,
+    );
   });
 
   it("vendors only a subdirectory when requested", async () => {
