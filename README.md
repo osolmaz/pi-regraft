@@ -1,17 +1,15 @@
 # pi-regraft
 
-Vendor code from an upstream git repo into your project as plain files, then
-re-pull upstream changes later without losing your local edits.
+Vendor code from an upstream Git repository into your project, edit it locally,
+and pull later upstream changes without losing your work.
 
-`pi-regraft` copies an upstream tree (a whole repo, a subdirectory, or a file
-tree) into your project and records where it came from in a small `regraft.json`
-manifest. When upstream moves on, it runs a three-way merge so upstream changes
-land on top of your edits. Git does the mechanical merge; when something
-genuinely conflicts, the Pi agent in your current session resolves it using the
-intent notes you recorded, and then you run your own tests.
+`pi-regraft` keeps the vendored files as ordinary files in your repository. It
+also commits each pristine upstream version to your branch. Updates read the old
+merge base from that local commit and fetch only the new upstream version. Git
+handles the three-way merge. When a conflict needs judgment, the Pi agent in the
+current session gets the affected files and your intent notes.
 
-There is no second git repository and no snapshot store. The vendored files are
-ordinary files in your own repo. The only added state is the manifest.
+There is no second repository, hidden Git ref, or snapshot directory.
 
 ## Install
 
@@ -25,49 +23,71 @@ Or try it without installing:
 pi -e git:github.com/osolmaz/pi-regraft
 ```
 
+## Requirements
+
+Run `pi-regraft` at the root of a Git repository. `add` and `update` require:
+
+- an attached branch
+- a clean worktree and index
+- a configured Git author for the base commits
+
+Keep the base commits in branch history. Rebasing them is fine, but squashing or
+dropping them removes the local merge base and blocks later updates.
+
 ## Use
 
-```
-/regraft add <url>[@ref][#subdir] [dest]   copy an upstream tree in and track it
-/regraft update <name>                     re-pull upstream, merging your edits
-/regraft status                            show which grafts are behind upstream
+```text
+/regraft add <url>[@ref][#subdir] [dest]   copy and commit an upstream tree
+/regraft update <name>                     pull upstream and restore local edits
+/regraft status                            show local bases and upstream status
 /regraft note <name> <text>                record why a local edit exists
 ```
 
-### Adding
+### Add a graft
 
-```
+```text
 /regraft add https://github.com/example/tool.git@main#extensions/foo vendor/foo
 ```
 
-This resolves `main` to a commit, copies `extensions/foo` into `vendor/foo`, and
-records the graft. Commit the pristine files first, then make your edits as a
-separate commit — that keeps the original copy recoverable from your own git
-history even if upstream rewrites or deletes it.
+This command:
 
-Record why each edit exists:
+1. Resolves `main` to an upstream commit.
+2. Copies `extensions/foo` into `vendor/foo`.
+3. Writes `regraft.json`.
+4. Creates a `chore(regraft): import upstream base` commit containing the
+   pristine files and manifest.
 
-```
+Make your local edits after that commit and commit them normally. Record the
+reason for an edit when it may matter during a future conflict:
+
+```text
 /regraft note foo "log every failed request"
 ```
 
-### Updating
+Commit the changed manifest before updating.
 
-```
+### Update a graft
+
+```text
 /regraft update foo
 ```
 
-If the tracked ref moved, `pi-regraft` merges the upstream changes into your
-edited copy. A clean merge just asks you to run your tests. A conflicting merge
-leaves standard conflict markers in the files and hands the agent a brief with
-the conflicted files and your intent notes, so it can resolve them while keeping
-your intent — after which you run your tests and commit.
+The command finds the matching base commit in local branch history, reads the
+old pristine tree from it, and fetches the new tracked upstream commit. It then:
 
-## How it works
+1. Merges the old base, the current committed files, and the new upstream tree
+   in temporary directories.
+2. Creates the next pristine upstream base commit.
+3. Restores the merged local overlay into the worktree.
 
-An update is a three-way merge between the base you started from, your current
-files, and the new upstream. See [docs/design.md](docs/design.md) for the model,
-the per-file merge rules, and what is intentionally out of scope.
+If there are no local changes to reapply, the new base commit is the complete
+update and the worktree stays clean. Otherwise, run the project checks and
+commit the restored overlay. Conflicting text edits contain normal Git conflict
+markers. Pi receives the affected file list and your intent notes so it can help
+resolve them.
+
+The update never fetches the old pinned commit from upstream. It fails if the
+matching local base commit is missing.
 
 ## Development
 
@@ -76,6 +96,8 @@ npm install
 npm run typecheck
 npm test
 ```
+
+See [docs/design.md](docs/design.md) for the commit model and merge rules.
 
 ## License
 

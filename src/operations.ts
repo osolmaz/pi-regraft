@@ -1,17 +1,30 @@
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import {
   findGraft,
   readManifest,
   upsertGraft,
   writeManifest,
   type Graft,
+  type Manifest,
 } from "./manifest.ts";
-import { exportTree, resolveRef, withUpstreamTree } from "./git.ts";
+import {
+  assertRepositoryReady,
+  commitLocalBase,
+  exportLocalTree,
+  exportTree,
+  findLocalBaseCommit,
+  headCommit,
+  pathsDirty,
+  repositoryPath,
+  repositoryRoot,
+  resolveRef,
+  restoreHeadPaths,
+} from "./git.ts";
 import { replaceDir, threeWayMerge, type MergeReport } from "./merge.ts";
 
-/** Parse `url[@ref][#subdir]` into its parts, defaulting ref=main, subdir=".". */
+/** Parse `url[@ref][#subdir]` into its parts, defaulting ref=HEAD, subdir=".". */
 export function parseSourceSpec(spec: string): { url: string; ref: string; subdir: string } {
   let rest = spec;
   let subdir = ".";
@@ -21,8 +34,6 @@ export function parseSourceSpec(spec: string): { url: string; ref: string; subdi
     rest = rest.slice(0, hash);
   }
   let ref = "HEAD";
-  // Only treat "@" as a ref separator when it is not part of an scp-like URL
-  // (git@host:...). The last "@" after the final "/" is the ref delimiter.
   const lastSlash = rest.lastIndexOf("/");
   const at = rest.indexOf("@", lastSlash + 1);
   if (at !== -1) {
@@ -30,6 +41,41 @@ export function parseSourceSpec(spec: string): { url: string; ref: string; subdi
     rest = rest.slice(0, at);
   }
   return { url: rest, ref, subdir };
+}
+
+function safeRelativePath(path: string, label: string, allowDot = false): string {
+  if (isAbsolute(path)) throw new Error(`${label} must be relative, got "${path}"`);
+  const cleaned = normalize(path);
+  if (
+    cleaned === ".." ||
+    cleaned.startsWith(`..${sep}`) ||
+    (!allowDot && (cleaned === "." || cleaned.length === 0))
+  ) {
+    throw new Error(`${label} must stay inside its root, got "${path}"`);
+  }
+  const components = cleaned.split(sep);
+  if (components.includes(".git")) {
+    throw new Error(`${label} must not include a .git directory`);
+  }
+  return components.join("/");
+}
+
+function validateName(name: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new Error(
+      `graft name "${name}" is invalid; use letters, numbers, dots, underscores, or hyphens`,
+    );
+  }
+}
+
+function assertDestinationSeparateFromManifest(dest: string, manifestPath: string): void {
+  if (
+    dest === manifestPath ||
+    dest.startsWith(`${manifestPath}/`) ||
+    manifestPath.startsWith(`${dest}/`)
+  ) {
+    throw new Error(`destination "${dest}" overlaps ${manifestPath}`);
+  }
 }
 
 function defaultDest(url: string, subdir: string): string {
@@ -46,6 +92,29 @@ async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0;
 }
 
+interface RepositoryContext {
+  projectRoot: string;
+  repoRoot: string;
+  manifestGitPath: string;
+}
+
+async function repositoryContext(manifestPath: string): Promise<RepositoryContext> {
+  const projectRoot = dirname(resolve(manifestPath));
+  const repoRoot = await repositoryRoot(projectRoot);
+  if (projectRoot !== repoRoot) {
+    throw new Error("regraft.json must be at the root of its Git repository");
+  }
+  return {
+    projectRoot,
+    repoRoot,
+    manifestGitPath: repositoryPath(repoRoot, manifestPath),
+  };
+}
+
+async function removeExport(treeDir: string): Promise<void> {
+  await rm(join(treeDir, ".."), { recursive: true, force: true });
+}
+
 export interface AddOptions {
   manifestPath: string;
   spec: string;
@@ -56,110 +125,220 @@ export interface AddOptions {
 
 export interface AddResult {
   graft: Graft;
+  baseCommit: string;
 }
 
 export async function addGraft(options: AddOptions): Promise<AddResult> {
-  const root = dirname(resolve(options.manifestPath));
-  const { url, ref, subdir } = parseSourceSpec(options.spec);
+  const context = await repositoryContext(options.manifestPath);
+  await assertRepositoryReady(context.repoRoot);
 
-  const commit = await resolveRef(url, ref);
+  const parsed = parseSourceSpec(options.spec);
+  if (!parsed.url) throw new Error("source URL must not be empty");
+  const subdir = safeRelativePath(parsed.subdir, "source subdirectory", true);
+  const destRel = safeRelativePath(options.dest ?? defaultDest(parsed.url, subdir), "destination");
+  const name = options.name ?? destRel.split("/").filter(Boolean).pop() ?? destRel;
+  validateName(name);
 
-  const destRel = options.dest ?? defaultDest(url, subdir);
-  if (isAbsolute(destRel)) {
-    throw new Error(`destination must be relative to the project, got "${destRel}"`);
-  }
-  const destAbs = join(root, destRel);
+  assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
+  const destAbs = join(context.projectRoot, ...destRel.split("/"));
+  const destExisted = existsSync(destAbs);
   if (!(await isEmptyDir(destAbs))) {
     throw new Error(
       `destination "${destRel}" already exists and is not empty; pick another path or remove it first`,
     );
   }
 
+  const manifestExisted = existsSync(options.manifestPath);
+  const manifestBefore = manifestExisted ? await readFile(options.manifestPath) : undefined;
   const manifest = await readManifest(options.manifestPath);
-  const name = options.name ?? destRel.split("/").filter(Boolean).pop() ?? destRel;
   if (findGraft(manifest, name)) {
     throw new Error(`a graft named "${name}" already exists; pass an explicit name`);
   }
-
-  const tree = await exportTree(url, commit, subdir);
-  try {
-    await replaceDir(tree, destAbs);
-  } finally {
-    const { rm } = await import("node:fs/promises");
-    await rm(join(tree, ".."), { recursive: true, force: true });
+  if (
+    manifest.grafts.some(
+      (entry) =>
+        entry.dest === destRel || entry.dest.startsWith(`${destRel}/`) || destRel.startsWith(`${entry.dest}/`),
+    )
+  ) {
+    throw new Error(`destination "${destRel}" overlaps an existing graft`);
   }
 
-  const graft: Graft = {
-    name,
-    dest: destRel,
-    source: { url, ref, subdir },
-    commit,
-    notes: options.note ? [options.note] : [],
-  };
-  await writeManifest(options.manifestPath, upsertGraft(manifest, graft));
-  return { graft };
+  const commit = await resolveRef(parsed.url, parsed.ref);
+  const tree = await exportTree(parsed.url, commit, subdir);
+  let committed = false;
+  try {
+    await replaceDir(tree, destAbs);
+    const graft: Graft = {
+      name,
+      dest: destRel,
+      source: { url: parsed.url, ref: parsed.ref, subdir },
+      commit,
+      notes: options.note ? [options.note] : [],
+    };
+    await writeManifest(options.manifestPath, upsertGraft(manifest, graft));
+
+    const baseCommit = await commitLocalBase(
+      context.repoRoot,
+      [context.manifestGitPath, destRel],
+      name,
+      commit,
+    );
+    committed = true;
+    return { graft, baseCommit };
+  } finally {
+    await removeExport(tree);
+    if (!committed) {
+      await rm(destAbs, { recursive: true, force: true });
+      if (destExisted) await mkdir(destAbs, { recursive: true });
+      if (manifestBefore) await writeFile(options.manifestPath, manifestBefore);
+      else await rm(options.manifestPath, { force: true });
+    }
+  }
 }
 
 export interface UpdateResult {
   graft: Graft;
   previousCommit: string;
   newCommit: string;
+  localBaseCommit: string;
+  newBaseCommit?: string;
   upToDate: boolean;
+  overlayPending: boolean;
   report?: MergeReport;
 }
 
 export async function updateGraft(manifestPath: string, name: string): Promise<UpdateResult> {
-  const root = dirname(resolve(manifestPath));
+  validateName(name);
+  const context = await repositoryContext(manifestPath);
+  await assertRepositoryReady(context.repoRoot);
+
   const manifest = await readManifest(manifestPath);
   const graft = findGraft(manifest, name);
   if (!graft) throw new Error(`no graft named "${name}"`);
-
-  const { url, ref, subdir } = graft.source;
-  const newCommit = await resolveRef(url, ref);
-  if (newCommit === graft.commit) {
-    return { graft, previousCommit: graft.commit, newCommit, upToDate: true };
-  }
-
-  const destAbs = join(root, graft.dest);
+  const destRel = safeRelativePath(graft.dest, "destination");
+  assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
+  const subdir = safeRelativePath(graft.source.subdir, "source subdirectory", true);
+  const destAbs = join(context.projectRoot, ...destRel.split("/"));
   if (!existsSync(destAbs)) {
     throw new Error(`graft directory "${graft.dest}" is missing on disk`);
   }
 
-  const report = await withUpstreamTree(url, graft.commit, subdir, (baseDir) =>
-    withUpstreamTree(url, newCommit, subdir, (upstreamDir) =>
-      threeWayMerge(baseDir, destAbs, upstreamDir),
-    ),
+  const localBaseCommit = await findLocalBaseCommit(
+    context.repoRoot,
+    context.manifestGitPath,
+    name,
+    destRel,
+    graft.commit,
   );
+  const newCommit = await resolveRef(graft.source.url, graft.source.ref);
+  if (newCommit === graft.commit) {
+    return {
+      graft,
+      previousCommit: graft.commit,
+      newCommit,
+      localBaseCommit,
+      upToDate: true,
+      overlayPending: false,
+    };
+  }
 
-  const updated: Graft = { ...graft, commit: newCommit };
-  await writeManifest(manifestPath, upsertGraft(manifest, updated));
+  const localHead = await headCommit(context.repoRoot);
+  let baseTree: string | undefined;
+  let localTree: string | undefined;
+  let upstreamTree: string | undefined;
+  try {
+    // Export sequentially so every completed temporary tree remains available
+    // for cleanup if a later export fails.
+    baseTree = await exportLocalTree(context.repoRoot, localBaseCommit, destRel);
+    localTree = await exportLocalTree(context.repoRoot, localHead, destRel);
+    upstreamTree = await exportTree(graft.source.url, newCommit, subdir);
 
-  return {
-    graft: updated,
-    previousCommit: graft.commit,
-    newCommit,
-    upToDate: false,
-    report,
-  };
+    const report = await threeWayMerge(baseTree, localTree, upstreamTree);
+    const updated: Graft = { ...graft, commit: newCommit };
+    const updatedManifest: Manifest = upsertGraft(manifest, updated);
+
+    await replaceDir(upstreamTree, destAbs);
+    await writeManifest(manifestPath, updatedManifest);
+
+    let newBaseCommit: string;
+    try {
+      newBaseCommit = await commitLocalBase(
+        context.repoRoot,
+        [context.manifestGitPath, destRel],
+        name,
+        newCommit,
+      );
+    } catch (error) {
+      await restoreHeadPaths(context.repoRoot, [context.manifestGitPath, destRel]);
+      throw error;
+    }
+
+    try {
+      await replaceDir(localTree, destAbs);
+    } catch (error) {
+      await restoreHeadPaths(context.repoRoot, [destRel]);
+      throw new Error(
+        `created local base ${newBaseCommit.slice(0, 12)} but could not restore the merged overlay: ${(error as Error).message}`,
+      );
+    }
+
+    const overlayPending = await pathsDirty(context.repoRoot, [destRel]);
+    return {
+      graft: updated,
+      previousCommit: graft.commit,
+      newCommit,
+      localBaseCommit,
+      newBaseCommit,
+      upToDate: false,
+      overlayPending,
+      report,
+    };
+  } finally {
+    await Promise.all(
+      [baseTree, localTree, upstreamTree]
+        .filter((tree): tree is string => tree !== undefined)
+        .map(removeExport),
+    );
+  }
 }
 
 export interface StatusEntry {
   graft: Graft;
   latestCommit: string;
+  localBaseCommit: string;
   behind: boolean;
 }
 
 export async function status(manifestPath: string): Promise<StatusEntry[]> {
+  const context = await repositoryContext(manifestPath);
   const manifest = await readManifest(manifestPath);
   const entries: StatusEntry[] = [];
   for (const graft of manifest.grafts) {
-    const latestCommit = await resolveRef(graft.source.url, graft.source.ref);
-    entries.push({ graft, latestCommit, behind: latestCommit !== graft.commit });
+    validateName(graft.name);
+    const destRel = safeRelativePath(graft.dest, "destination");
+    assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
+    const [latestCommit, localBaseCommit] = await Promise.all([
+      resolveRef(graft.source.url, graft.source.ref),
+      findLocalBaseCommit(
+        context.repoRoot,
+        context.manifestGitPath,
+        graft.name,
+        destRel,
+        graft.commit,
+      ),
+    ]);
+    entries.push({
+      graft,
+      latestCommit,
+      localBaseCommit,
+      behind: latestCommit !== graft.commit,
+    });
   }
   return entries;
 }
 
 export async function addNote(manifestPath: string, name: string, note: string): Promise<Graft> {
+  validateName(name);
   const manifest = await readManifest(manifestPath);
   const graft = findGraft(manifest, name);
   if (!graft) throw new Error(`no graft named "${name}"`);

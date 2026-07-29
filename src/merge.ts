@@ -1,5 +1,6 @@
-import { readdir, readFile, writeFile, mkdir, rm, cp } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, mkdtemp, rm, cp } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { git } from "./git.ts";
 
@@ -135,8 +136,7 @@ async function mergeFile(
   local: Buffer,
   upstream: Buffer,
 ): Promise<{ content: Buffer; conflicted: boolean }> {
-  const dir = join(process.cwd(), ".regraft-merge-tmp");
-  await mkdir(dir, { recursive: true });
+  const dir = await mkdtemp(join(tmpdir(), "regraft-merge-file-"));
   const localPath = join(dir, "local");
   const basePath = join(dir, "base");
   const upstreamPath = join(dir, "upstream");

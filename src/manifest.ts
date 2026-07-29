@@ -22,8 +22,9 @@ export interface Graft {
   dest: string;
   source: GraftSource;
   /**
-   * The upstream commit the current local copy is based on. This is the merge
-   * base for the next update. Advanced only after a successful update.
+   * The upstream revision represented by the latest pristine base commit in
+   * the consumer repository. The files for this revision are read from that
+   * local commit during the next update, never fetched from old upstream state.
    */
   commit: string;
   /**
