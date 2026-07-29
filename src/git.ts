@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -50,6 +50,24 @@ export async function resolveRef(url: string, ref: string): Promise<string> {
   return sha;
 }
 
+async function assertSourceDirectory(clone: string, subdir: string): Promise<string> {
+  let current = clone;
+  if (subdir !== ".") {
+    for (const component of subdir.split("/")) {
+      current = join(current, component);
+      if (!existsSync(current)) throw new Error(`source subdirectory "${subdir}" does not exist`);
+      const metadata = await lstat(current);
+      if (metadata.isSymbolicLink()) {
+        throw new Error(`source subdirectory "${subdir}" must not traverse symlinks`);
+      }
+      if (!metadata.isDirectory()) {
+        throw new Error(`source selection "${subdir}" must be a directory`);
+      }
+    }
+  }
+  return current;
+}
+
 async function copyTree(source: string, workspace: string): Promise<string> {
   if (!existsSync(source)) throw new Error(`tree path does not exist: ${source}`);
   const out = join(workspace, "tree");
@@ -81,10 +99,7 @@ export async function exportTree(url: string, commit: string, subdir: string): P
     await git(["fetch", "--quiet", "origin", commit], clone);
     await gitOrThrow(["checkout", "--quiet", "--detach", commit], clone);
 
-    const source = subdir === "." ? clone : join(clone, subdir);
-    if (!existsSync(source)) {
-      throw new Error(`subdir "${subdir}" does not exist in ${url} at ${commit.slice(0, 12)}`);
-    }
+    const source = await assertSourceDirectory(clone, subdir);
     return await copyTree(source, workspace);
   } catch (error) {
     await rm(workspace, { recursive: true, force: true });
