@@ -418,6 +418,23 @@ describe("repository safety", () => {
 });
 
 describe("source selection", () => {
+  it("peels annotated tags to their commit", async () => {
+    await writeFile(join(upstream, "a.txt"), "tagged\n");
+    await commitUpstream("v1");
+    await g(["tag", "-a", "v1", "-m", "v1"], upstream);
+    const expected = (await g(["rev-parse", "v1^{commit}"], upstream)).trim();
+    const tagObject = (await g(["rev-parse", "v1"], upstream)).trim();
+
+    const { graft } = await addGraft({
+      manifestPath: join(project, "regraft.json"),
+      spec: `${upstream}@v1`,
+      dest: "vendor/a",
+    });
+
+    expect(graft.commit).toBe(expected);
+    expect(graft.commit).not.toBe(tagObject);
+  });
+
   it("supports SHA-256 upstream repositories", async () => {
     await rm(join(upstream, ".git"), { recursive: true, force: true });
     await g(["init", "-q", "-b", "main", "--object-format=sha256"], upstream);
