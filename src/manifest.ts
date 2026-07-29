@@ -14,7 +14,7 @@ export interface GraftSource {
   subdir: string;
 }
 
-/** One vendored surface: a directory or file tree copied from upstream. */
+/** One vendored directory tree copied from upstream. */
 export interface Graft {
   /** Stable name used to address the graft in commands. */
   name: string;

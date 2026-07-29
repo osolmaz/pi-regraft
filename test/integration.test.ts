@@ -342,6 +342,36 @@ describe("repository safety", () => {
 });
 
 describe("source selection", () => {
+  it("rejects file selections that cannot be updated as trees", async () => {
+    await writeFile(join(upstream, "only.txt"), "one\n");
+    await commitUpstream("v1");
+
+    await expect(
+      addGraft({
+        manifestPath: join(project, "regraft.json"),
+        spec: `${upstream}@main#only.txt`,
+        dest: "vendor/only",
+      }),
+    ).rejects.toThrow("must be a directory");
+  });
+
+  it("rejects source subdirectories that traverse symlinks", async () => {
+    const external = join(root, "upstream-external");
+    await mkdir(external);
+    await writeFile(join(external, "secret.txt"), "secret\n");
+    await symlink(external, join(upstream, "escape"), "dir");
+    await commitUpstream("add escaping symlink");
+
+    await expect(
+      addGraft({
+        manifestPath: join(project, "regraft.json"),
+        spec: `${upstream}@main#escape/secret.txt`,
+        dest: "vendor/exfil",
+      }),
+    ).rejects.toThrow("must not traverse symlinks");
+    expect(existsSync(join(project, "vendor/exfil"))).toBe(false);
+  });
+
   it("force-stages upstream files matched by consumer ignore rules", async () => {
     await mkdir(join(upstream, "dist"));
     await writeFile(join(upstream, "dist/bundle.js"), "bundle\n");
