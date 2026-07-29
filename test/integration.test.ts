@@ -36,6 +36,23 @@ async function commitProject(message: string): Promise<void> {
   await commitAll(project, message);
 }
 
+async function withGitConfig<T>(key: string, value: string, fn: () => Promise<T>): Promise<T> {
+  const keys = ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"] as const;
+  const previous = keys.map((name) => process.env[name]);
+  process.env.GIT_CONFIG_COUNT = "1";
+  process.env.GIT_CONFIG_KEY_0 = key;
+  process.env.GIT_CONFIG_VALUE_0 = value;
+  try {
+    return await fn();
+  } finally {
+    keys.forEach((name, index) => {
+      const oldValue = previous[index];
+      if (oldValue === undefined) delete process.env[name];
+      else process.env[name] = oldValue;
+    });
+  }
+}
+
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "regraft-int-"));
   upstream = join(root, "upstream");
@@ -276,6 +293,24 @@ describe("repository safety", () => {
     expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
   });
 
+  it("rejects a committed replacement of the graft root with a file", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+
+    await rm(join(project, "vendor/a"), { recursive: true, force: true });
+    await writeFile(join(project, "vendor/a"), "local root file\n");
+    await commitProject("feat: replace graft root");
+    await writeFile(join(upstream, "a.txt"), "a2\n");
+    await commitUpstream("v2");
+
+    await expect(updateGraft(manifestPath, "a")).rejects.toThrow(
+      "is not a directory in local commit",
+    );
+    expect((await g(["status", "--porcelain"], project)).trim()).toBe("");
+  });
+
   it("refuses update while local edits are uncommitted", async () => {
     await writeFile(join(upstream, "a.txt"), "a1\n");
     await commitUpstream("v1");
@@ -398,6 +433,23 @@ describe("source selection", () => {
 
     expect(graft.commit).toMatch(/^[0-9a-f]{64}$/);
     expect(await g(["show", `${baseCommit}:vendor/a/a.txt`], project)).toBe("sha256\n");
+  });
+
+  it("preserves symlinks when Git defaults core.symlinks to false", async () => {
+    await writeFile(join(upstream, "target.txt"), "target\n");
+    await symlink("target.txt", join(upstream, "link.txt"));
+    await commitUpstream("v1");
+
+    const { baseCommit } = await withGitConfig("core.symlinks", "false", () =>
+      addGraft({
+        manifestPath: join(project, "regraft.json"),
+        spec: `${upstream}@main`,
+        dest: "vendor/a",
+      }),
+    );
+
+    expect((await lstat(join(project, "vendor/a/link.txt"))).isSymbolicLink()).toBe(true);
+    expect(await g(["ls-tree", baseCommit, "vendor/a/link.txt"], project)).toMatch(/^120000 /);
   });
 
   it("rejects file selections that cannot be updated as trees", async () => {
