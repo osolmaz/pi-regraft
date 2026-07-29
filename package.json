@@ -1,0 +1,43 @@
+{
+  "name": "pi-regraft",
+  "version": "0.1.0",
+  "description": "Vendor code from an upstream git repo into your project as plain files, then re-pull upstream changes without losing your local edits. Ships a Pi extension that hands merge conflicts to the agent to resolve.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Onur Solmaz",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "vendor",
+    "vendoring",
+    "upstream",
+    "merge",
+    "fork"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/osolmaz/pi-regraft.git"
+  },
+  "pi": {
+    "extensions": [
+      "extensions"
+    ]
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.82.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
