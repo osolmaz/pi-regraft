@@ -40,7 +40,8 @@ contains the same graft name, destination, and upstream commit.
 
 The base commit is part of normal branch ancestry, so ordinary pushes and clones
 carry it. Git garbage collection keeps it reachable. No hidden ref, side branch,
-or snapshot directory is needed.
+or snapshot directory is needed. When an upstream tree is empty, the manifest
+and trailers still identify the base because Git does not store empty directories.
 
 Squashing or dropping a base commit removes the pristine copy from ancestry.
 The next update then stops with an error instead of falling back to upstream.

@@ -146,4 +146,15 @@ describe("threeWayMerge", () => {
     expect(report.conflicts).toContain("item/child.txt");
     expect(await readFile(join(local, "item/child.txt"), "utf8")).toBe("local edit\n");
   });
+
+  it("preserves a locally added directory when upstream adds a file at its path", async () => {
+    await put(local, "item/local.txt", "local addition\n");
+    await put(upstream, "item", "upstream file\n");
+
+    const report = await threeWayMerge(base, local, upstream);
+
+    expect(report.conflicts).toContain("item");
+    expect(report.conflicts).toContain("item/local.txt");
+    expect(await readFile(join(local, "item/local.txt"), "utf8")).toBe("local addition\n");
+  });
 });

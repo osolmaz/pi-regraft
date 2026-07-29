@@ -152,6 +152,27 @@ describe("local committed merge bases", () => {
     expect(await readFile(join(project, "vendor/a/a.txt"), "utf8")).toBe("a2\n");
   });
 
+  it("keeps updating after an upstream revision becomes empty", async () => {
+    await writeFile(join(upstream, "a.txt"), "a1\n");
+    await commitUpstream("v1");
+    const manifestPath = join(project, "regraft.json");
+    await addGraft({ manifestPath, spec: `${upstream}@main`, dest: "vendor/a" });
+
+    await rm(join(upstream, "a.txt"));
+    await commitUpstream("empty v2");
+    const empty = await updateGraft(manifestPath, "a");
+    expect(empty.overlayPending).toBe(false);
+    await rm(join(project, "vendor/a"), { recursive: true, force: true });
+
+    await writeFile(join(upstream, "b.txt"), "b3\n");
+    await commitUpstream("v3");
+    const restored = await updateGraft(manifestPath, "a");
+
+    expect(restored.localBaseCommit).toBe(empty.newBaseCommit);
+    expect(restored.overlayPending).toBe(false);
+    expect(await readFile(join(project, "vendor/a/b.txt"), "utf8")).toBe("b3\n");
+  });
+
   it("leaves conflict markers over the newly committed upstream base", async () => {
     await writeFile(join(upstream, "config.txt"), "value = 1\n");
     await commitUpstream("v1");
