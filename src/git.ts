@@ -97,7 +97,7 @@ export async function exportTree(url: string, commit: string, subdir: string): P
       clone,
     ]);
     await git(["fetch", "--quiet", "origin", commit], clone);
-    await gitOrThrow(["checkout", "--quiet", "--detach", commit], clone);
+    await gitOrThrow(["-c", "core.symlinks=true", "checkout", "--quiet", "--detach", commit], clone);
 
     const source = await assertSourceDirectory(clone, subdir);
     return await copyTree(source, workspace);
@@ -324,12 +324,21 @@ export async function exportLocalTree(
       repoRoot,
       clone,
     ]);
-    await gitOrThrow(["checkout", "--quiet", "--detach", commit], clone);
+    await gitOrThrow(["-c", "core.symlinks=true", "checkout", "--quiet", "--detach", commit], clone);
     const source = join(clone, ...gitPath.split("/"));
-    if (!existsSync(source)) {
+    const metadata = await lstat(source).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!metadata) {
       const empty = join(workspace, "tree");
       await mkdir(empty);
       return empty;
+    }
+    if (!metadata.isDirectory()) {
+      throw new Error(
+        `graft destination "${gitPath}" is not a directory in local commit ${commit.slice(0, 12)}`,
+      );
     }
     return await copyTree(source, workspace);
   } catch (error) {
