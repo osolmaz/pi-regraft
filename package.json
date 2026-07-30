@@ -40,7 +40,10 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./cli": "./src/cli.ts"
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/chmod-cli.mjs",
