@@ -10,13 +10,13 @@ three-way merge bases during updates. It fetches only the new upstream commit.
 
 ## Install
 
-Install from GitHub:
+Install from npm:
 
 ```bash
-pi install git:github.com/osolmaz/pi-regraft
+pi install npm:pi-regraft
 ```
 
-You can also run it without installing:
+You can also run the GitHub version without installing it:
 
 ```bash
 pi -e git:github.com/osolmaz/pi-regraft
