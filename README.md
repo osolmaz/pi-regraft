@@ -31,6 +31,13 @@ upstream repository, tracked ref, optional subdirectory, and destination:
 /regraft add https://github.com/example/tool.git@main#extensions/foo vendor/foo
 ```
 
+The npm package also installs a `regraft` executable for scripts and coding
+agents:
+
+```bash
+regraft add https://github.com/example/tool.git@main#extensions/foo vendor/foo
+```
+
 The destination must be empty. Regraft copies the selected upstream tree into
 `vendor/foo` and writes `regraft.json` before creating a commit named
 `chore(regraft): import upstream base`.
@@ -83,6 +90,11 @@ file-versus-directory changes.
 /regraft status                            show local bases and upstream status
 /regraft note <name> <text>                record why a local edit exists
 ```
+
+The executable provides the same operations without the leading slash. Add
+`--json` to receive one versioned JSON result on stdout. Expected merge
+conflicts return a successful `needs_resolution` result so an agent can inspect
+and resolve them before running project checks.
 
 ## Repository requirements
 
