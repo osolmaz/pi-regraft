@@ -185,6 +185,7 @@ export async function runCli(
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
     return { code: 0, stdout: usage(), stderr: "" };
   }
+  const requestedJson = argv.includes("--json");
   let invocation: ParsedInvocation | undefined;
   try {
     invocation = parseInvocation(argv);
@@ -208,8 +209,8 @@ export async function runCli(
     const result = errorResult(command, kind, message);
     return {
       code: usageFailure ? 2 : 1,
-      stdout: invocation?.json ? `${JSON.stringify(result)}\n` : "",
-      stderr: invocation?.json
+      stdout: requestedJson ? `${JSON.stringify(result)}\n` : "",
+      stderr: requestedJson
         ? ""
         : message.endsWith("\n")
           ? message

@@ -149,4 +149,17 @@ describe("regraft CLI", () => {
     const error = JSON.parse(result.stdout) as ErrorCommandResult;
     expect(error.error.kind).toBe("usage");
   });
+
+  it("emits JSON for unknown commands when requested", async () => {
+    const result = await runCli(["bogus", "--json"], project);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toBe("");
+    const error = JSON.parse(result.stdout) as ErrorCommandResult;
+    expect(error).toMatchObject({
+      schema_version: 1,
+      command: "unknown",
+      state: "error",
+      error: { kind: "usage" },
+    });
+  });
 });
