@@ -8,6 +8,9 @@ The vendored code stays in your repository as ordinary files. Regraft stores
 pristine upstream copies in normal commits on your branch and uses them as
 three-way merge bases during updates. It fetches only the new upstream commit.
 
+The package also includes Regrafter, a dedicated Pi agent for resolving update
+conflicts, running checks, and pausing when an update needs a product decision.
+
 ## Install
 
 Install from npm:
@@ -95,6 +98,50 @@ The executable provides the same operations without the leading slash. Add
 `--json` to receive one versioned JSON result on stdout. Expected merge
 conflicts return a successful `needs_resolution` result so an agent can inspect
 and resolve them before running project checks.
+
+## Regrafter
+
+Regrafter keeps one Pi session and one repository lease for each update run. It
+can pause for several decisions and resume without losing the conversation or
+the exact repository state.
+
+Install the commands and Pi Factory, then install the app bundle:
+
+```bash
+npm install -g pi-regraft @osolmaz/pi-factory
+pi-factory install osolmaz/pi-regraft --ref v0.3.0 --yes
+```
+
+Work with Regrafter directly in a repository:
+
+```bash
+pi-factory run regrafter --cwd /path/to/repository
+```
+
+A main agent or script can drive the same app through bounded controller
+commands:
+
+```bash
+regrafter start --repo /path/to/repository --request-file task.md --json
+regrafter send <run-id> --decision <decision-id> --message-file answer.md --json
+regrafter inspect <run-id> --json
+regrafter list --repo /path/to/repository --json
+regrafter attach <run-id>
+regrafter abort <run-id> --json
+```
+
+The baseline command grants no authority to create overlay commits, push, or
+open pull requests. Grant only the actions the run needs with
+`--allow commits,push,pull-requests`. A later `send` may add authority, but it
+cannot remove authority already granted.
+
+Regrafter never drops a lease because it is old and never silently chooses
+between competing local and upstream behavior. `abort` does not reset files; it
+releases the lease only after verifying the repository handoff state.
+
+The bundled app defaults to an OpenAI-compatible model named `regrafter` at
+`http://127.0.0.1:1234/v1`. It does not install or start a model server. Edit
+the installed `pi-factory.toml` when the endpoint or model differs.
 
 ## Repository requirements
 

@@ -1,6 +1,6 @@
 # Regrafter implementation plan
 
-This plan implements the [Regrafter specification](regrafter-spec.md) across `pi-regraft`, `pi-factory`, a new Regrafter app bundle, and an optional driver integration for OnurPi. Each repository keeps its existing ownership boundary. The work finishes with a real multi-step update in which a main Pi agent receives a decision request, supplies the answer, and resumes the same Regrafter run.
+This plan implements the [Regrafter specification](regrafter-spec.md) inside `pi-regraft`, with generic target-directory support in `pi-factory` and an optional driver integration for OnurPi. Regraft and Regrafter ship together while retaining separate mechanical and agent responsibilities. The work finishes with a real multi-step update in which a main Pi agent receives a decision request, supplies the answer, and resumes the same Regrafter run.
 
 ## Starting state
 
@@ -49,24 +49,25 @@ Validate the target path before writing runtime configuration. `plan` must show 
 
 ### Regrafter app
 
-Create a separate repository for the Regrafter Pi Factory app. Apply the normal repository defaults, MIT license, TypeScript Slophammer checks, and release-published npm workflow if the controller is published as a package.
+Ship the Regrafter Pi Factory app and controller in the `pi-regraft` repository and npm package. Keep its source under a dedicated namespace so the app remains isolated without requiring a second release or dependency graph.
 
-The app contains:
+The integrated package contains:
 
 ```text
-regrafter/
+pi-regraft/
 ├── pi-factory.toml
-├── prompts/
+├── regrafter/
 │   └── system.md
-├── extensions/
-│   └── report.ts
 ├── src/
-│   ├── cli.ts
-│   ├── controller.ts
-│   ├── lease.ts
-│   ├── reports.ts
-│   └── runs.ts
-└── tests/
+│   └── regrafter/
+│       ├── cli.ts
+│       ├── controller.ts
+│       ├── lease.ts
+│       ├── report-extension.ts
+│       ├── reports.ts
+│       └── runs.ts
+└── test/
+    └── regrafter/
 ```
 
 The system prompt defines the update sequence, decision boundaries, Git rules, and direct-versus-driven behavior. It tells Regrafter to use the `regraft` executable for merge steps and forbids ad hoc replacements.
@@ -79,7 +80,7 @@ The run index and lease records live under the Regrafter app state directory. Wr
 
 ### OnurPi driver integration
 
-After the standalone flow works, add a small optional Regrafter driver skill to OnurPi. Its description should match requests to delegate vendored-package maintenance to Regrafter.
+After the integrated controller flow works, add a small optional Regrafter driver skill to OnurPi. Its description should match requests to delegate vendored-package maintenance to Regrafter.
 
 The skill teaches the main agent to:
 
@@ -132,7 +133,7 @@ Run mutation tests before merge if the changed launch and CLI code is in the con
 
 ### Controller and reports
 
-Build the Regrafter app against local tarballs or worktrees for the two dependencies. Start with a fake Pi child process that emits known report events. Cover session creation and resume, malformed output, missing terminal reports, process interruption, and exit signal forwarding.
+Build the Regrafter app inside `pi-regraft` against the released Pi Factory dependency. Start with a fake Pi child process that emits known report events. Cover session creation and resume, malformed output, missing terminal reports, process interruption, and exit signal forwarding.
 
 Implement the run index and repository lease. Test two path spellings for the same Git common directory, linked worktrees, an active competing run, an interrupted owner process, explicit abort, and a repository changed outside Regrafter while paused.
 
@@ -184,30 +185,27 @@ The final test should include an explicit push request. Regrafter may push only 
 
 Each repository change needs its own review because the ownership boundaries differ.
 
-For `pi-regraft`, review the command as another adapter over the merge core. Reject duplicated merge logic or any fallback that fetches an old upstream base.
+For `pi-regraft`, review the command as another adapter over the merge core and the Regrafter source as a separate orchestration namespace. Reject duplicated merge logic, any fallback that fetches an old upstream base, hidden product choices, automatic stale-lock deletion, or controller code that edits the target repository.
 
 For Pi Factory, review the change as generic target-directory and launch-plan support. Reject Regraft-specific fields, prompts, or run states in Pi Factory.
-
-For the Regrafter app, review decision quality, session resume, lease behavior, and report validation. Reject hidden product choices, automatic stale-lock deletion, and controller code that edits the target repository.
 
 For OnurPi, review only the delegation skill and pinned package changes. Confirm that no Regraft tool schema appears in ordinary sessions.
 
 ## Release order
 
-Release the dependencies before the app:
+Release the dependency before the integrated package:
 
 1. Publish the Pi Factory version that supports target working directories and launch overrides.
-2. Publish the `pi-regraft` version that includes the compiled command and JSON contract.
-3. Pin both versions in the Regrafter app and publish or install the first app release.
-4. Add the optional driver skill and pinned Regrafter version to OnurPi.
+2. Publish the `pi-regraft` version that includes the compiled Regraft command, Regrafter app, and controller.
+3. Add the optional driver skill and pin that `pi-regraft` version in OnurPi.
 
-Both existing projects are pre-1.0. These additions create new automation surfaces, so their release changes should follow each repository's pre-1.0 minor-version convention unless that convention changes before implementation.
+Both projects are pre-1.0. These additions create new automation surfaces, so their release changes should follow each repository's pre-1.0 minor-version convention unless that convention changes before implementation.
 
 Use GitHub Release publication and trusted npm publishing. Verify each registry artifact and provenance statement. Test both the executable and Pi Factory installation before updating downstream pins.
 
 ## Completion evidence
 
-The implementation is complete when the following evidence is linked from the final Regrafter release:
+The implementation is complete when the following evidence is linked from the integrated `pi-regraft` release:
 
 - passing local and CI quality gates in every changed repository
 - packed-artifact tests for both executables

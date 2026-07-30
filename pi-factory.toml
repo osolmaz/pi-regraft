@@ -1,0 +1,32 @@
+schema_version = 1
+id = "regrafter"
+name = "Regrafter"
+version = "0.3.0"
+description = "Updates Regraft-managed vendored code with decision-aware resume."
+state_dir = "~/.local/state/regrafter/pi"
+session_dir = "~/.local/state/regrafter/pi/sessions"
+pi_command = ["./scripts/regrafter-pi-with-path.mjs"]
+thinking = "high"
+tools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
+system_prompt = "./regrafter/system.md"
+
+[provider]
+id = "regrafter-local"
+base_url = "http://127.0.0.1:1234/v1"
+api = "openai-completions"
+
+[model]
+id = "regrafter"
+name = "Regrafter local model"
+context_window = 131072
+max_tokens = 32768
+reasoning = true
+
+[[extensions]]
+path = "./dist/regrafter/report-extension.js"
+
+[[build]]
+command = ["npm", "ci"]
+
+[[build]]
+command = ["npm", "run", "build"]

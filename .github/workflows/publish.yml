@@ -61,7 +61,11 @@ jobs:
             exit 1
           fi
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm pack --dry-run
-      - run: npm publish
+      - run: npm run check
+      - run: npm run mutate
+      - uses: osolmaz/slophammer@main
+        with:
+          checker: ts
+          version: 0.4.0
+      - run: npm pack --dry-run --json
+      - run: npm publish --provenance
