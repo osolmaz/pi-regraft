@@ -5,6 +5,17 @@
   "type": "module",
   "license": "MIT",
   "author": "Onur Solmaz",
+  "files": [
+    "docs",
+    "extensions",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "keywords": [
     "pi-package",
     "pi-extension",
