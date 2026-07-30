@@ -1,11 +1,12 @@
 {
   "name": "pi-regraft",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vendor code from an upstream git repo into your project as plain files, then re-pull upstream changes without losing your local edits. Ships a Pi extension that hands merge conflicts to the agent to resolve.",
   "type": "module",
   "license": "MIT",
   "author": "Onur Solmaz",
   "files": [
+    "dist",
     "docs",
     "extensions",
     "src",
@@ -34,13 +35,19 @@
       "extensions"
     ]
   },
+  "bin": {
+    "regraft": "dist/cli-main.js"
+  },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cli": "./src/cli.ts"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/chmod-cli.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
@@ -48,7 +55,7 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",
     "@types/node": "^22.0.0",
-    "typescript": "^5.6.0",
+    "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }
 }

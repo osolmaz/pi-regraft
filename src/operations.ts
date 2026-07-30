@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import {
   findGraft,
@@ -24,6 +31,7 @@ import {
   restoreHeadPaths,
   rollbackLocalBase,
 } from "./git.ts";
+import { withRepositoryLock } from "./lock.ts";
 import { replaceDir, threeWayMerge, type MergeReport } from "./merge.ts";
 
 function refSeparator(spec: string): number {
@@ -39,13 +47,20 @@ function refSeparator(spec: string): number {
   const firstAt = spec.indexOf("@");
   const hostColon = firstAt === -1 ? -1 : spec.indexOf(":", firstAt + 1);
   const firstSlash = spec.indexOf("/");
-  const scpLike = firstAt > 0 && hostColon > firstAt && (firstSlash === -1 || hostColon < firstSlash);
+  const scpLike =
+    firstAt > 0 &&
+    hostColon > firstAt &&
+    (firstSlash === -1 || hostColon < firstSlash);
   if (scpLike && lastAt === firstAt) return -1;
   return lastAt;
 }
 
 /** Parse `url[@ref][#subdir]` into its parts, defaulting ref=HEAD, subdir=".". */
-export function parseSourceSpec(spec: string): { url: string; ref: string; subdir: string } {
+export function parseSourceSpec(spec: string): {
+  url: string;
+  ref: string;
+  subdir: string;
+} {
   let rest = spec;
   let subdir = ".";
   const hash = rest.indexOf("#");
@@ -62,8 +77,13 @@ export function parseSourceSpec(spec: string): { url: string; ref: string; subdi
   return { url: rest, ref, subdir };
 }
 
-function safeRelativePath(path: string, label: string, allowDot = false): string {
-  if (isAbsolute(path)) throw new Error(`${label} must be relative, got "${path}"`);
+function safeRelativePath(
+  path: string,
+  label: string,
+  allowDot = false,
+): string {
+  if (isAbsolute(path))
+    throw new Error(`${label} must be relative, got "${path}"`);
   const cleaned = normalize(path);
   if (
     cleaned === ".." ||
@@ -101,12 +121,19 @@ function assertNoEmbeddedCredentials(sourceUrl: string): void {
       );
     }
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("source URLs must not")) throw error;
+    if (
+      error instanceof Error &&
+      error.message.startsWith("source URLs must not")
+    )
+      throw error;
     // Local paths and scp-like SSH URLs are not WHATWG URLs.
   }
 }
 
-function assertDestinationSeparateFromManifest(dest: string, manifestPath: string): void {
+function assertDestinationSeparateFromManifest(
+  dest: string,
+  manifestPath: string,
+): void {
   if (
     dest === manifestPath ||
     dest.startsWith(`${manifestPath}/`) ||
@@ -121,7 +148,11 @@ function defaultDest(url: string, subdir: string): string {
     const tail = subdir.split("/").filter(Boolean).pop();
     if (tail) return tail;
   }
-  const name = url.replace(/\.git$/, "").split(/[/:]/).filter(Boolean).pop();
+  const name = url
+    .replace(/\.git$/, "")
+    .split(/[/:]/)
+    .filter(Boolean)
+    .pop();
   return name ?? "vendored";
 }
 
@@ -130,13 +161,18 @@ async function isEmptyDir(dir: string): Promise<boolean> {
   return (await readdir(dir)).length === 0;
 }
 
-async function assertNoSymlinkComponents(root: string, path: string): Promise<void> {
+async function assertNoSymlinkComponents(
+  root: string,
+  path: string,
+): Promise<void> {
   let current = root;
   for (const component of path.split("/")) {
     current = join(current, component);
     try {
       if ((await lstat(current)).isSymbolicLink()) {
-        throw new Error(`destination "${path}" passes through symlink ${current}`);
+        throw new Error(
+          `destination "${path}" passes through symlink ${current}`,
+        );
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -151,7 +187,9 @@ interface RepositoryContext {
   manifestGitPath: string;
 }
 
-async function repositoryContext(manifestPath: string): Promise<RepositoryContext> {
+async function repositoryContext(
+  manifestPath: string,
+): Promise<RepositoryContext> {
   const projectRoot = dirname(resolve(manifestPath));
   const repoRoot = await repositoryRoot(projectRoot);
   if (projectRoot !== repoRoot) {
@@ -183,14 +221,27 @@ export interface AddResult {
 
 export async function addGraft(options: AddOptions): Promise<AddResult> {
   const context = await repositoryContext(options.manifestPath);
+  return withRepositoryLock(context.repoRoot, () =>
+    addGraftLocked(options, context),
+  );
+}
+
+async function addGraftLocked(
+  options: AddOptions,
+  context: RepositoryContext,
+): Promise<AddResult> {
   await assertRepositoryReady(context.repoRoot);
 
   const parsed = parseSourceSpec(options.spec);
   if (!parsed.url) throw new Error("source URL must not be empty");
   assertNoEmbeddedCredentials(parsed.url);
   const subdir = safeRelativePath(parsed.subdir, "source subdirectory", true);
-  const destRel = safeRelativePath(options.dest ?? defaultDest(parsed.url, subdir), "destination");
-  const name = options.name ?? destRel.split("/").filter(Boolean).pop() ?? destRel;
+  const destRel = safeRelativePath(
+    options.dest ?? defaultDest(parsed.url, subdir),
+    "destination",
+  );
+  const name =
+    options.name ?? destRel.split("/").filter(Boolean).pop() ?? destRel;
   validateName(name);
 
   assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
@@ -204,15 +255,21 @@ export async function addGraft(options: AddOptions): Promise<AddResult> {
   }
 
   const manifestExisted = existsSync(options.manifestPath);
-  const manifestBefore = manifestExisted ? await readFile(options.manifestPath) : undefined;
+  const manifestBefore = manifestExisted
+    ? await readFile(options.manifestPath)
+    : undefined;
   const manifest = await readManifest(options.manifestPath);
   if (findGraft(manifest, name)) {
-    throw new Error(`a graft named "${name}" already exists; pass an explicit name`);
+    throw new Error(
+      `a graft named "${name}" already exists; pass an explicit name`,
+    );
   }
   if (
     manifest.grafts.some(
       (entry) =>
-        entry.dest === destRel || entry.dest.startsWith(`${destRel}/`) || destRel.startsWith(`${entry.dest}/`),
+        entry.dest === destRel ||
+        entry.dest.startsWith(`${destRel}/`) ||
+        destRel.startsWith(`${entry.dest}/`),
     )
   ) {
     throw new Error(`destination "${destRel}" overlaps an existing graft`);
@@ -262,9 +319,22 @@ export interface UpdateResult {
   report?: MergeReport;
 }
 
-export async function updateGraft(manifestPath: string, name: string): Promise<UpdateResult> {
+export async function updateGraft(
+  manifestPath: string,
+  name: string,
+): Promise<UpdateResult> {
   validateName(name);
   const context = await repositoryContext(manifestPath);
+  return withRepositoryLock(context.repoRoot, () =>
+    updateGraftLocked(manifestPath, name, context),
+  );
+}
+
+async function updateGraftLocked(
+  manifestPath: string,
+  name: string,
+  context: RepositoryContext,
+): Promise<UpdateResult> {
   await assertRepositoryReady(context.repoRoot);
 
   const manifest = await readManifest(manifestPath);
@@ -273,7 +343,11 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
   assertNoEmbeddedCredentials(graft.source.url);
   const destRel = safeRelativePath(graft.dest, "destination");
   assertDestinationSeparateFromManifest(destRel, context.manifestGitPath);
-  const subdir = safeRelativePath(graft.source.subdir, "source subdirectory", true);
+  const subdir = safeRelativePath(
+    graft.source.subdir,
+    "source subdirectory",
+    true,
+  );
   await assertNoSymlinkComponents(context.repoRoot, destRel);
   await assertNoIgnoredPaths(context.repoRoot, destRel);
   const destAbs = join(context.projectRoot, ...destRel.split("/"));
@@ -304,7 +378,11 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
   try {
     // Export sequentially so every completed temporary tree remains available
     // for cleanup if a later export fails.
-    baseTree = await exportLocalTree(context.repoRoot, localBaseCommit, destRel);
+    baseTree = await exportLocalTree(
+      context.repoRoot,
+      localBaseCommit,
+      destRel,
+    );
     localTree = await exportLocalTree(context.repoRoot, localHead, destRel);
     upstreamTree = await exportTree(graft.source.url, newCommit, subdir);
 
@@ -324,7 +402,10 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
       );
     } catch (error) {
       try {
-        await restoreHeadPaths(context.repoRoot, [context.manifestGitPath, destRel]);
+        await restoreHeadPaths(context.repoRoot, [
+          context.manifestGitPath,
+          destRel,
+        ]);
       } catch (rollbackError) {
         throw new Error(
           `regraft update failed (${(error as Error).message}) and rollback also failed: ${(rollbackError as Error).message}`,
@@ -337,11 +418,10 @@ export async function updateGraft(manifestPath: string, name: string): Promise<U
       await replaceDir(localTree, destAbs);
     } catch (error) {
       try {
-        await rollbackLocalBase(
-          context.repoRoot,
-          localHead,
-          [context.manifestGitPath, destRel],
-        );
+        await rollbackLocalBase(context.repoRoot, localHead, [
+          context.manifestGitPath,
+          destRel,
+        ]);
       } catch (rollbackError) {
         throw new Error(
           `created local base ${newBaseCommit.slice(0, 12)} but could not restore the merged overlay (${(error as Error).message}) or roll the base back: ${(rollbackError as Error).message}`,
@@ -381,6 +461,15 @@ export interface StatusEntry {
 
 export async function status(manifestPath: string): Promise<StatusEntry[]> {
   const context = await repositoryContext(manifestPath);
+  return withRepositoryLock(context.repoRoot, () =>
+    statusLocked(manifestPath, context),
+  );
+}
+
+async function statusLocked(
+  manifestPath: string,
+  context: RepositoryContext,
+): Promise<StatusEntry[]> {
   const manifest = await readManifest(manifestPath);
   const entries: StatusEntry[] = [];
   for (const graft of manifest.grafts) {
@@ -408,12 +497,19 @@ export async function status(manifestPath: string): Promise<StatusEntry[]> {
   return entries;
 }
 
-export async function addNote(manifestPath: string, name: string, note: string): Promise<Graft> {
+export async function addNote(
+  manifestPath: string,
+  name: string,
+  note: string,
+): Promise<Graft> {
   validateName(name);
-  const manifest = await readManifest(manifestPath);
-  const graft = findGraft(manifest, name);
-  if (!graft) throw new Error(`no graft named "${name}"`);
-  const updated: Graft = { ...graft, notes: [...graft.notes, note] };
-  await writeManifest(manifestPath, upsertGraft(manifest, updated));
-  return updated;
+  const context = await repositoryContext(manifestPath);
+  return withRepositoryLock(context.repoRoot, async () => {
+    const manifest = await readManifest(manifestPath);
+    const graft = findGraft(manifest, name);
+    if (!graft) throw new Error(`no graft named "${name}"`);
+    const updated: Graft = { ...graft, notes: [...graft.notes, note] };
+    await writeManifest(manifestPath, upsertGraft(manifest, updated));
+    return updated;
+  });
 }
