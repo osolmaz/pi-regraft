@@ -1,0 +1,40 @@
+typescript:
+  coverage:
+    threshold: 85
+  complexity:
+    max: 8
+  dry:
+    max_findings: 0
+    paths:
+      - src
+      - extensions
+    copied_blocks:
+      enabled: true
+      min_tokens: 100
+  mutation:
+    targets:
+      - src/regrafter/reports.ts
+      - src/regrafter/lease.ts
+      - src/regrafter/runs.ts
+  dependency_boundaries:
+    - from: src/regrafter/controller
+      allow:
+        [
+          src/regrafter/git,
+          src/regrafter/lease,
+          src/regrafter/reports,
+          src/regrafter/run-lock,
+          src/regrafter/runs,
+          src/regrafter/types
+        ]
+    - from: src/regrafter/cli
+      allow:
+        [src/regrafter/controller, src/regrafter/reports, src/regrafter/runs, src/regrafter/types]
+    - from: src/regrafter/lease
+      allow: [src/regrafter/atomic, src/regrafter/types]
+    - from: src/regrafter/runs
+      allow: [src/regrafter/atomic, src/regrafter/reports, src/regrafter/types]
+    - from: src/regrafter/run-lock
+      allow: [src/regrafter/atomic, src/regrafter/runs]
+    - from: src/regrafter/report-extension
+      allow: [src/regrafter/report-schema]

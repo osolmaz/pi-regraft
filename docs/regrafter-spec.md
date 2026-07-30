@@ -1,6 +1,6 @@
 # Regrafter specification
 
-Regrafter is a dedicated Pi agent for maintaining code tracked by Regraft. It runs inside a target repository and uses the `regraft` command for mechanical updates. It handles the judgment needed to interpret local intent, resolve conflicts, run checks, and prepare commits.
+Regrafter is the dedicated Pi agent shipped with `pi-regraft` for maintaining code tracked by Regraft. It runs inside a target repository and uses the `regraft` command for mechanical updates. It handles the judgment needed to interpret local intent, resolve conflicts, run checks, and prepare commits.
 
 A person may work with Regrafter directly. A main Pi agent may also drive Regrafter through a resumable command interface. The same Regrafter run can stop for a decision, receive an answer later, and continue in its original Pi session and repository state.
 
@@ -54,7 +54,7 @@ The command never makes semantic choices. It can produce conflict markers and re
 
 ### Pi Factory app bundle
 
-The Regrafter app bundle owns its system prompt, enabled tools, extensions, model settings, and isolated Pi state. It uses Pi's normal session implementation and extension SDK.
+The Regrafter app bundle ships inside `pi-regraft`. It owns its system prompt, enabled tools, extensions, model settings, and isolated Pi state. It uses Pi's normal session implementation and extension SDK.
 
 The bundle enables the standard tools needed for repository work. The first version uses `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. It does not add Regraft operations as model tools. The agent invokes the `regraft` executable through `bash`.
 
@@ -289,7 +289,7 @@ The controller treats app bundle files and target repository files as separate t
 
 Regrafter does not replace Regraft's merge implementation. It does not fetch missing historical bases, invent local intent, run multiple updates against a dirty worktree, or choose a product direction because one option is easier.
 
-Pi Factory continues to own app resolution and launch preparation. Pi owns the agent runtime and sessions. `pi-regraft` owns vendoring state and merge behavior. The Regrafter app owns its prompt, controller, decision protocol, and repository lease.
+Pi Factory continues to own app resolution and launch preparation. Pi owns the agent runtime and sessions. Within the `pi-regraft` package, Regraft owns vendoring state and merge behavior while Regrafter owns its prompt, controller, decision protocol, and repository lease. This code boundary does not require a separate repository or package.
 
 ## Acceptance criteria
 
