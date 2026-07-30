@@ -1,45 +1,81 @@
 # pi-regraft
 
-Vendor code from an upstream Git repository into your project, edit it locally,
-and pull later upstream changes without losing your work.
+`pi-regraft` is a Pi extension for vendoring code from Git repositories. It lets
+you change the copied code in place and pull later upstream changes without
+losing your work.
 
-`pi-regraft` keeps the vendored files as ordinary files in your repository. It
-also commits each pristine upstream version to your branch. Updates read the old
-merge base from that local commit and fetch only the new upstream version. Git
-handles the three-way merge. When a conflict needs judgment, the Pi agent in the
-current session gets the affected files and your intent notes.
-
-There is no second repository, hidden Git ref, or snapshot directory.
+The vendored code stays in your repository as ordinary files. Regraft stores
+pristine upstream copies in normal commits on your branch and uses them as
+three-way merge bases during updates. It fetches only the new upstream commit.
 
 ## Install
+
+Install from GitHub:
 
 ```bash
 pi install git:github.com/osolmaz/pi-regraft
 ```
 
-Or try it without installing:
+You can also run it without installing:
 
 ```bash
 pi -e git:github.com/osolmaz/pi-regraft
 ```
 
-## Requirements
+## First graft
 
-Run `pi-regraft` at the root of a Git repository. `add` and `update` require:
+Run Pi at the root of the repository that will receive the files. Add an
+upstream repository, tracked ref, optional subdirectory, and destination:
 
-- an attached branch
-- a clean worktree and index
-- a configured Git author for the base commits
-- Git authentication from a credential helper or SSH key, never embedded in the source URL
-- no ignored, uncommitted files inside the graft being updated
+```text
+/regraft add https://github.com/example/tool.git@main#extensions/foo vendor/foo
+```
 
-The ignored-file check prevents an update from erasing generated local data that
-is absent from Git history. Move or remove those files before updating.
+The destination must be empty. Regraft copies the selected upstream tree into
+`vendor/foo` and writes `regraft.json` before creating a commit named
+`chore(regraft): import upstream base`.
 
-Keep the base commits in branch history. Rebasing them is fine, but squashing or
-dropping them removes the local merge base and blocks later updates.
+Edit the copied files after that commit and commit your changes normally. If a
+local change has a reason that may matter during conflict resolution, record it
+in the manifest:
 
-## Use
+```text
+/regraft note foo "log every failed request"
+```
+
+Commit the updated manifest before pulling from upstream.
+
+## Updates
+
+Check whether any tracked ref has advanced:
+
+```text
+/regraft status
+```
+
+Update one graft by name:
+
+```text
+/regraft update foo
+```
+
+Regraft reads the old pristine tree from your branch and fetches the new
+upstream commit before merging these trees:
+
+1. the old pristine upstream tree
+2. your committed local tree
+3. the new upstream tree
+
+It commits the new pristine tree before restoring the merged local version in
+your worktree. If you made no local changes, the worktree stays clean. If local
+changes remain, run your project checks and commit the restored local version.
+
+Text conflicts use normal Git conflict markers. Pi receives the affected file
+paths and the notes from `regraft.json`, so the agent can help resolve them.
+Regraft also preserves executable bits, symlinks, binary files, and
+file-versus-directory changes.
+
+## Commands
 
 ```text
 /regraft add <url>[@ref][#subdir] [dest]   copy and commit an upstream tree
@@ -48,62 +84,24 @@ dropping them removes the local merge base and blocks later updates.
 /regraft note <name> <text>                record why a local edit exists
 ```
 
-### Add a graft
+## Repository requirements
 
-```text
-/regraft add https://github.com/example/tool.git@main#extensions/foo vendor/foo
-```
+`add` and `update` require an attached Git branch, a clean worktree and index,
+and a configured Git author. Git credentials must come from a credential helper
+or SSH key. Regraft rejects credentials embedded in source URLs.
 
-This command:
+An update also refuses to run when ignored, uncommitted files exist inside the
+graft. Move or remove those files first so they cannot be erased by the update.
 
-1. Resolves `main` to an upstream commit.
-2. Copies `extensions/foo` into `vendor/foo`.
-3. Writes `regraft.json`.
-4. Creates a `chore(regraft): import upstream base` commit containing the
-   pristine files and manifest.
+Keep every `chore(regraft): import upstream base` commit in branch history.
+Rebasing those commits is safe. Squashing or dropping them removes the merge
+bases and blocks future updates.
 
-Make your local edits after that commit and commit them normally. Record the
-reason for an edit when it may matter during a future conflict:
+Regraft fails when a required local base is missing. It never recovers the old
+base by fetching the previously pinned commit from upstream.
 
-```text
-/regraft note foo "log every failed request"
-```
-
-Commit the changed manifest before updating.
-
-### Update a graft
-
-```text
-/regraft update foo
-```
-
-The command finds the matching base commit in local branch history, reads the
-old pristine tree from it, and fetches the new tracked upstream commit. It then:
-
-1. Merges the old base, the current committed files, and the new upstream tree
-   in temporary directories.
-2. Creates the next pristine upstream base commit.
-3. Restores the merged local overlay into the worktree.
-
-If there are no local changes to reapply, the new base commit is the complete
-update and the worktree stays clean. Otherwise, run the project checks and
-commit the restored overlay. Conflicting text edits contain normal Git conflict
-markers. Pi receives the affected file list and your intent notes so it can help
-resolve them. Clean upstream changes to executable bits, symlink targets, and
-file-versus-directory layout are preserved.
-
-The update never fetches the old pinned commit from upstream. It fails if the
-matching local base commit is missing.
-
-## Development
-
-```bash
-npm install
-npm run typecheck
-npm test
-```
-
-See [docs/design.md](docs/design.md) for the commit model and merge rules.
+The full commit model and merge rules are in
+[the design document](docs/design.md).
 
 ## License
 
