@@ -48,6 +48,7 @@
       "types": "./dist/extension.d.ts",
       "default": "./dist/extension.js"
     },
+    "./extension-source": "./src/extension.ts",
     "./cli": {
       "types": "./dist/cli.d.ts",
       "default": "./dist/cli.js"
