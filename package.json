@@ -8,7 +8,6 @@
   "files": [
     "dist",
     "docs",
-    "extensions",
     "regrafter",
     "scripts/bin/regraft",
     "scripts/regrafter-pi-with-path.mjs",
@@ -36,7 +35,7 @@
   },
   "pi": {
     "extensions": [
-      "extensions"
+      "./src/extension.ts"
     ]
   },
   "bin": {
@@ -45,6 +44,10 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "default": "./dist/extension.js"
+    },
     "./cli": {
       "types": "./dist/cli.d.ts",
       "default": "./dist/cli.js"
@@ -60,7 +63,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/chmod-cli.mjs",
-    "format": "prettier --check \"src/regrafter/**/*.ts\" \"test/regrafter/**/*.ts\" \"regrafter/**/*.md\" \"scripts/regrafter-*.mjs\" scripts/bin/regraft package.json eslint.config.mjs vitest.config.ts stryker.config.mjs slophammer.yml AGENTS.md",
+    "format": "prettier --check src/extension.ts \"src/regrafter/**/*.ts\" \"test/regrafter/**/*.ts\" \"regrafter/**/*.md\" \"scripts/regrafter-*.mjs\" scripts/bin/regraft package.json eslint.config.mjs vitest.config.ts stryker.config.mjs slophammer.yml AGENTS.md",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

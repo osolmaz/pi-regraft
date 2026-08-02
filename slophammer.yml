@@ -7,7 +7,6 @@ typescript:
     max_findings: 0
     paths:
       - src
-      - extensions
     copied_blocks:
       enabled: true
       min_tokens: 100

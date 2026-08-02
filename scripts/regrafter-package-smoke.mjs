@@ -28,7 +28,7 @@ try {
     [
       "--input-type=module",
       "-e",
-      "import('pi-regraft/regrafter').then(m=>{if(typeof m.startRun!=='function')process.exit(1)})"
+      "Promise.all([import('pi-regraft/extension'),import('pi-regraft/regrafter')]).then(([extension,regrafter])=>{if(typeof extension.default!=='function'||typeof regrafter.startRun!=='function')process.exit(1)})"
     ],
     { cwd: project, stdio: "ignore" }
   );

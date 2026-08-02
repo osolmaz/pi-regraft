@@ -12,14 +12,8 @@
  */
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { MANIFEST_FILE } from "../src/manifest.ts";
-import {
-  addGraft,
-  addNote,
-  status,
-  updateGraft,
-  type UpdateResult,
-} from "../src/operations.ts";
+import { MANIFEST_FILE } from "./manifest.ts";
+import { addGraft, addNote, status, updateGraft, type UpdateResult } from "./operations.ts";
 
 function manifestPath(cwd: string): string {
   return join(cwd, MANIFEST_FILE);
@@ -32,7 +26,7 @@ function usage(): string {
     "  /regraft add <url>[@ref][#subdir] [dest]   copy an upstream tree in and track it",
     "  /regraft update <name>                     re-pull upstream, merging your edits",
     "  /regraft status                            show which grafts are behind upstream",
-    "  /regraft note <name> <text>                record why a local edit exists",
+    "  /regraft note <name> <text>                record why a local edit exists"
   ].join("\n");
 }
 
@@ -48,20 +42,20 @@ function conflictBrief(result: UpdateResult): string {
     `regraft committed pristine upstream base ${shortSha(result.newBaseCommit!)} for "${graft.name}" (${shortSha(previousCommit)} -> ${shortSha(newCommit)}) and restored the local overlay with conflicts.`,
     "",
     `Files requiring resolution under ${graft.dest} (overlapping text edits contain <<<<<<< local / ======= / >>>>>>> upstream markers):`,
-    ...conflicts.map((f) => `  - ${join(graft.dest, f)}`),
+    ...conflicts.map((f) => `  - ${join(graft.dest, f)}`)
   ];
   if (graft.notes.length > 0) {
     lines.push(
       "",
       "Why these local edits exist (preserve this intent while resolving):",
-      ...graft.notes.map((n) => `  - ${n}`),
+      ...graft.notes.map((n) => `  - ${n}`)
     );
   }
   lines.push(
     "",
     "Resolve each conflict so the file keeps the intent above while taking the",
     "upstream changes, remove all conflict markers, then run this project's tests",
-    "or checks to confirm the result before committing.",
+    "or checks to confirm the result before committing."
   );
   return lines.join("\n");
 }
@@ -78,11 +72,11 @@ async function runAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext, rest: stri
     const { graft, baseCommit } = await addGraft({
       manifestPath: manifestPath(ctx.cwd),
       spec,
-      dest,
+      dest
     });
     ctx.ui.notify(
       `regraft: added "${graft.name}" -> ${graft.dest}; local base ${shortSha(baseCommit)}`,
-      "info",
+      "info"
     );
     pi.sendUserMessage(
       [
@@ -92,9 +86,9 @@ async function runAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext, rest: stri
         "Make local edits now and commit them normally. Before every update, the worktree",
         "must be clean. Regraft will read its merge base from this repository's history,",
         "not from the old upstream commit. Use",
-        `\`/regraft note ${graft.name} <why>\` to record the intent behind each edit.`,
+        `\`/regraft note ${graft.name} <why>\` to record the intent behind each edit.`
       ].join("\n"),
-      { deliverAs: "followUp" },
+      { deliverAs: "followUp" }
     );
   } catch (err) {
     ctx.ui.notify(`regraft add failed: ${(err as Error).message}`, "error");
@@ -104,7 +98,7 @@ async function runAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext, rest: stri
 async function runUpdate(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
-  rest: string,
+  rest: string
 ): Promise<void> {
   const name = rest.trim();
   if (!name) {
@@ -121,21 +115,18 @@ async function runUpdate(
     if (report.conflicts.length === 0) {
       const summary = `${report.changed.length} changed, ${report.added.length} added, ${report.removed.length} removed`;
       const base = shortSha(result.newBaseCommit!);
-      ctx.ui.notify(
-        `regraft: committed local base ${base} for "${name}" (${summary})`,
-        "info",
-      );
+      ctx.ui.notify(`regraft: committed local base ${base} for "${name}" (${summary})`, "info");
       pi.sendUserMessage(
         result.overlayPending
           ? `regraft committed pristine upstream base ${base} for "${name}" at ${shortSha(result.newCommit)}, then restored the merged local overlay in the worktree (${summary}). Run this project's tests or checks and commit the overlay.`
           : `regraft committed pristine upstream base ${base} for "${name}" at ${shortSha(result.newCommit)} (${summary}). There was no local overlay to restore, so the worktree is clean. Run this project's tests or checks to confirm the update.`,
-        { deliverAs: "followUp" },
+        { deliverAs: "followUp" }
       );
       return;
     }
     ctx.ui.notify(
       `regraft: "${name}" updated with ${report.conflicts.length} conflict(s); handing to the agent`,
-      "warning",
+      "warning"
     );
     pi.sendUserMessage(conflictBrief(result), { deliverAs: "followUp" });
   } catch (err) {
@@ -151,9 +142,7 @@ async function runStatus(ctx: ExtensionCommandContext): Promise<void> {
       return;
     }
     const lines = entries.map((e) => {
-      const state = e.behind
-        ? `behind (latest ${shortSha(e.latestCommit)})`
-        : "up to date";
+      const state = e.behind ? `behind (latest ${shortSha(e.latestCommit)})` : "up to date";
       return `${e.graft.name} @ ${shortSha(e.graft.commit)} (local base ${shortSha(e.localBaseCommit)}) — ${state}`;
     });
     ctx.ui.notify(`regraft status:\n${lines.join("\n")}`, "info");
@@ -214,6 +203,6 @@ export default function extension(pi: ExtensionAPI): void {
         default:
           ctx.ui.notify(usage(), sub ? "warning" : "info");
       }
-    },
+    }
   });
 }
