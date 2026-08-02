@@ -72,7 +72,7 @@ async function runAdd(pi: ExtensionAPI, ctx: ExtensionCommandContext, rest: stri
     const { graft, baseCommit } = await addGraft({
       manifestPath: manifestPath(ctx.cwd),
       spec,
-      dest
+      ...(dest ? { dest } : {})
     });
     ctx.ui.notify(
       `regraft: added "${graft.name}" -> ${graft.dest}; local base ${shortSha(baseCommit)}`,
