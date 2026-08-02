@@ -109,7 +109,7 @@ Install the commands and Pi Factory, then install the app bundle:
 
 ```bash
 npm install -g pi-regraft @osolmaz/pi-factory
-pi-factory install osolmaz/pi-regraft --ref v0.3.0 --yes
+pi-factory install osolmaz/pi-regraft --ref v0.4.0 --yes
 ```
 
 Work with Regrafter directly in a repository:
