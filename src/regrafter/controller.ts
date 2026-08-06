@@ -329,6 +329,10 @@ async function launchPlan(
   return { ...plan, env: { ...plan.env, REGRAFTER_REPORT_FILE: outputPath } };
 }
 
+function isStreamingDeltaLine(line: string): boolean {
+  return line.startsWith('{"type":"message_update"');
+}
+
 async function launchInteractive(plan: PiLaunchPlan): Promise<LaunchResult> {
   const child = spawn(plan.command, plan.args, {
     cwd: plan.cwd,
@@ -362,6 +366,7 @@ export async function launchAgent(plan: PiLaunchPlan, logPath: string): Promise<
   const secrets = sensitiveValues({ ...process.env, ...plan.env });
   const stdout = lineSink((line) => {
     sessionId ??= sessionFromLine(line);
+    if (isStreamingDeltaLine(line)) return;
     log.write(`${redactText(line, secrets)}\n`);
   });
   const stderr = lineSink((line) => {

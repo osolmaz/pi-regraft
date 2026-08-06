@@ -455,7 +455,7 @@ it("captures a Pi JSON session header and complete log", async () => {
   const script = join(root, "child.mjs");
   await writeFile(
     script,
-    'import { spawn } from "node:child_process"; const background = spawn(process.execPath, ["-e", "setTimeout(() => {}, 4000)"], { stdio: "inherit" }); background.unref(); process.stdout.write("not-json\\n" + JSON.stringify({type:"other"}) + "\\n" + JSON.stringify({type:"session",id:"session-json"})); process.stderr.write("diagnostic " + process.env.TEST_SECRET_TOKEN);\n'
+    'import { spawn } from "node:child_process"; const background = spawn(process.execPath, ["-e", "setTimeout(() => {}, 4000)"], { stdio: "inherit" }); background.unref(); process.stdout.write("not-json\\n" + JSON.stringify({type:"other"}) + "\\n" + JSON.stringify({type:"message_update",assistantMessageEvent:{type:"thinking_delta",delta:"draft"}}) + "\\n" + JSON.stringify({type:"session",id:"session-json"})); process.stderr.write("diagnostic " + process.env.TEST_SECRET_TOKEN);\n'
   );
   const plan: PiLaunchPlan = {
     appId: "test",
@@ -479,4 +479,7 @@ it("captures a Pi JSON session header and complete log", async () => {
   const content = await readFile(log, "utf8");
   expect(content).toContain("diagnostic [redacted]");
   expect(content).not.toContain("super-secret-value");
+  expect(content).toContain('"type":"other"');
+  expect(content).not.toContain("message_update");
+  expect(result.sessionId).toBe("session-json");
 });
