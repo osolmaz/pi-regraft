@@ -109,8 +109,26 @@ Install the commands and Pi Factory, then install the app bundle:
 
 ```bash
 npm install -g pi-regraft @osolmaz/pi-factory
-pi-factory install osolmaz/pi-regraft --ref v0.4.0 --yes
+pi-factory install osolmaz/pi-regraft --yes
 ```
+
+Point Regrafter at a model from your Pi profile — the same providers, models,
+and credentials as your regular `pi`, read in place and never copied:
+
+```bash
+regrafter config set model <provider/model>
+```
+
+The config lives at `$XDG_CONFIG_HOME/regrafter/config.json` (default
+`~/.config/regrafter/config.json`). `regrafter config show` prints the current
+selection, `regrafter config set thinking <level>` adjusts the thinking level,
+and `regrafter config reset` clears the config. When a model is configured,
+runs launch Pi with the ambient profile: the host agent dir provides `auth.json`
+and the model catalog, sessions stay in Regrafter's own state directory, and
+host extensions, skills, prompt templates, and themes are disabled for the run.
+When the configured provider is `huggingface`, the bundled
+`pi-huggingface-oauth` extension is loaded so Hugging Face OAuth keeps working.
+`regrafter attach` uses the same selection.
 
 Work with Regrafter directly in a repository:
 
@@ -139,33 +157,12 @@ Regrafter never drops a lease because it is old and never silently chooses
 between competing local and upstream behavior. `abort` does not reset files; it
 releases the lease only after verifying the repository handoff state.
 
-The bundled app defaults to an OpenAI-compatible model named `regrafter` at
-`http://127.0.0.1:1234/v1`. It does not install or start a model server.
+### Local model server
 
-### Ambient Pi profile
-
-Instead of the bundled local endpoint, Regrafter can run with a model from the
-host Pi profile — the same providers, models, and credentials as the calling
-`pi`, read in place and never copied. Configure it once:
-
-```bash
-regrafter config set model huggingface/moonshotai/Kimi-K3:fireworks-ai
-regrafter config set thinking high   # optional
-regrafter config show
-regrafter config reset               # back to the bundled local endpoint
-```
-
-The config lives at `$XDG_CONFIG_HOME/regrafter/config.json` (default
-`~/.config/regrafter/config.json`). When a model is configured, runs launch Pi
-with the ambient profile: the host agent dir provides `auth.json` and the model
-catalog, sessions stay in Regrafter's own state directory, and host extensions,
-skills, prompt templates, and themes are disabled for the run. When the
-configured provider is `huggingface`, the bundled `pi-huggingface-oauth`
-extension is loaded so Hugging Face OAuth keeps working. `regrafter attach`
-uses the same selection.
-
-Without a config file, edit the installed `pi-factory.toml` when the endpoint
-or model differs.
+Without a config file, the bundled app defaults to an OpenAI-compatible model
+named `regrafter` at `http://127.0.0.1:1234/v1`. It does not install or start a
+model server. Edit the installed `pi-factory.toml` when the endpoint or model
+differs.
 
 ## Repository requirements
 
