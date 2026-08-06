@@ -1,4 +1,11 @@
 import { readFile } from "node:fs/promises";
+import {
+  defaultConfigPath,
+  loadConfig,
+  resetConfig,
+  setConfigModel,
+  setConfigThinking
+} from "./config.js";
 import { abortRun, attachRun, findRuns, inspectRun, sendRun, startRun } from "./controller.js";
 import type { RunAuthority } from "./types.js";
 
@@ -26,7 +33,8 @@ const commands: Readonly<Record<string, (args: readonly string[]) => Promise<unk
   inspect: inspectCommand,
   list: listCommand,
   attach: attachCommand,
-  abort: abortCommand
+  abort: abortCommand,
+  config: configCommand
 };
 
 async function dispatch(args: readonly string[]): Promise<unknown> {
@@ -78,6 +86,33 @@ async function abortCommand(args: readonly string[]): Promise<unknown> {
   if (parsed.positionals.length !== 1) throw new Error("abort requires one run id");
   return await abortRun(parsed.positionals[0] ?? "");
 }
+const configUsage =
+  "config requires show, reset, set model <provider/model>, or set thinking <level>";
+async function configCommand(args: readonly string[]): Promise<unknown> {
+  const parsed = parseOptions(args, new Set());
+  const [action, field, value, ...rest] = parsed.positionals;
+  if (rest.length > 0) throw new Error(`unexpected argument: ${rest[0] ?? ""}`);
+  if (action === "set") return await configSet(field, value);
+  if (field !== undefined) throw new Error(configUsage);
+  if (action === "show") {
+    return { schema_version: 1, path: defaultConfigPath(), config: (await loadConfig()) ?? null };
+  }
+  if (action === "reset") {
+    await resetConfig();
+    return { schema_version: 1, path: defaultConfigPath(), config: null };
+  }
+  throw new Error(configUsage);
+}
+async function configSet(field: string | undefined, value: string | undefined): Promise<unknown> {
+  if (value === undefined) throw new Error(configUsage);
+  if (field === "model") {
+    return { schema_version: 1, path: defaultConfigPath(), config: await setConfigModel(value) };
+  }
+  if (field === "thinking") {
+    return { schema_version: 1, path: defaultConfigPath(), config: await setConfigThinking(value) };
+  }
+  throw new Error(configUsage);
+}
 
 type Parsed = { positionals: string[]; options: Map<string, string> };
 function parseOptions(args: readonly string[], accepted: ReadonlySet<string>): Parsed {
@@ -127,10 +162,10 @@ function print(value: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(value, null, json ? undefined : 2)}\n`);
 }
 function usageError(message: string): boolean {
-  return /^(missing|unknown|duplicate|unexpected|start |send |inspect |attach |abort |--)/u.test(
+  return /^(missing|unknown|duplicate|unexpected|start |send |inspect |attach |abort |config |--)/u.test(
     message
   );
 }
 function usage(): string {
-  return `Usage:\n  regrafter start --repo <path> --request-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter send <run-id> [--decision <id>] --message-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter inspect <run-id> [--json]\n  regrafter list [--repo <path>] [--json]\n  regrafter attach <run-id>\n  regrafter abort <run-id> [--json]\n`;
+  return `Usage:\n  regrafter start --repo <path> --request-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter send <run-id> [--decision <id>] --message-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter inspect <run-id> [--json]\n  regrafter list [--repo <path>] [--json]\n  regrafter attach <run-id>\n  regrafter abort <run-id> [--json]\n  regrafter config show [--json]\n  regrafter config set model <provider/model> [--json]\n  regrafter config set thinking <level> [--json]\n  regrafter config reset [--json]\n`;
 }

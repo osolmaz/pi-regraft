@@ -13,6 +13,8 @@ import {
   writePiRuntimeConfig,
   type PiLaunchPlan
 } from "@osolmaz/pi-factory";
+import { resolveAppProfile } from "./ambient.js";
+import { defaultConfigPath, loadConfig } from "./config.js";
 import { identifyRepository, sameSnapshot, snapshotRepository } from "./git.js";
 import { acquireLease, readLease, releaseLease, updateLease } from "./lease.js";
 import { controllerResult, readAgentReport } from "./reports.js";
@@ -29,7 +31,12 @@ import type {
 
 export type LaunchResult = { code: number; signal: NodeJS.Signals | null; sessionId?: string };
 export type AgentLauncher = (plan: PiLaunchPlan, logPath: string) => Promise<LaunchResult>;
-export type ControllerOptions = { stateDir?: string; appFile?: string; launcher?: AgentLauncher };
+export type ControllerOptions = {
+  stateDir?: string;
+  appFile?: string;
+  configFile?: string;
+  launcher?: AgentLauncher;
+};
 export type StartOptions = ControllerOptions & { authority?: RunAuthority };
 export type SendOptions = ControllerOptions & { grant?: RunAuthority };
 
@@ -156,13 +163,16 @@ async function attachRunLocked(
   const outputPath = reportPath(stateDir, id);
   await rm(outputPath, { force: true });
   const loaded = await loadPiApp({ appFile: options.appFile ?? defaultAppFile() });
-  const app = await manifestToDefinition(loaded.manifest, loaded.appRoot);
+  const base = await manifestToDefinition(loaded.manifest, loaded.appRoot);
+  const config = await loadConfig(options.configFile ?? defaultConfigPath());
+  const { app, profile } = resolveAppProfile(base, config);
   const runtime = await writePiRuntimeConfig(app);
   const plan = await createPiLaunchPlan(app, runtime, {
     cwd: run.repository,
     mode: "interactive",
     session: sessionId,
-    name: `Regrafter ${id}`
+    name: `Regrafter ${id}`,
+    profile
   });
   const launch = await launchInteractive({
     ...plan,
@@ -259,7 +269,7 @@ async function invoke(
   const logPath = join(stateDir, "logs", `${working.run_id}.log`);
   const launch = await (async (): Promise<LaunchResult> => {
     try {
-      const plan = await launchPlan(working, message, outputPath, options.appFile);
+      const plan = await launchPlan(working, message, outputPath, options);
       return await (options.launcher ?? launchAgent)(plan, logPath);
     } catch (error) {
       return await failWithoutReport(working, stateDir, errorMessage(error));
@@ -300,10 +310,12 @@ async function launchPlan(
   run: RunRecord,
   message: string,
   outputPath: string,
-  appFile: string | undefined
+  options: ControllerOptions
 ): Promise<PiLaunchPlan> {
-  const loaded = await loadPiApp({ appFile: appFile ?? defaultAppFile() });
-  const app = await manifestToDefinition(loaded.manifest, loaded.appRoot);
+  const loaded = await loadPiApp({ appFile: options.appFile ?? defaultAppFile() });
+  const base = await manifestToDefinition(loaded.manifest, loaded.appRoot);
+  const config = await loadConfig(options.configFile ?? defaultConfigPath());
+  const { app, profile } = resolveAppProfile(base, config);
   const runtime = await writePiRuntimeConfig(app);
   await mkdir(app.sessionDir, { recursive: true });
   const plan = await createPiLaunchPlan(app, runtime, {
@@ -311,6 +323,7 @@ async function launchPlan(
     mode: "json",
     name: `Regrafter ${run.run_id}`,
     messages: [message],
+    profile,
     ...(run.session_id === undefined ? {} : { session: run.session_id })
   });
   return { ...plan, env: { ...plan.env, REGRAFTER_REPORT_FILE: outputPath } };

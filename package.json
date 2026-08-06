@@ -78,9 +78,10 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@osolmaz/pi-factory": "^0.2.0",
+    "@osolmaz/pi-factory": "^0.5.0",
     "@sinclair/typebox": "^0.34.0",
-    "cross-spawn": "^7.0.6"
+    "cross-spawn": "^7.0.6",
+    "pi-huggingface-oauth": "^0.1.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

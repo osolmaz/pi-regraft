@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -89,4 +89,29 @@ it("rejects an empty request file", async () => {
   const request = join(root, "empty.txt");
   await writeFile(request, " \n");
   expect(await runCli(["start", "--repo", "/repo", "--request-file", request])).toBe(1);
+});
+
+it("manages the model config through the config command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "regrafter-cli-config-"));
+  vi.stubEnv("XDG_CONFIG_HOME", root);
+  try {
+    const configPath = join(root, "regrafter", "config.json");
+    expect(
+      await runCli(["config", "set", "model", "huggingface/moonshotai/Kimi-K3:fireworks-ai"])
+    ).toBe(0);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      version: 1,
+      auth: "pi",
+      model: "huggingface/moonshotai/Kimi-K3:fireworks-ai"
+    });
+    expect(await runCli(["config", "set", "thinking", "high"])).toBe(0);
+    expect(await runCli(["config", "show"])).toBe(0);
+    expect(await runCli(["config", "reset"])).toBe(0);
+    await expect(readFile(configPath, "utf8")).rejects.toThrow();
+    expect(await runCli(["config", "set", "model", "model-only"])).toBe(1);
+    expect(await runCli(["config", "set", "thinking", "max"])).toBe(1);
+    expect(await runCli(["config", "unknown"])).toBe(2);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PiLaunchPlan } from "@osolmaz/pi-factory";
 import {
   abortRun,
@@ -18,7 +18,12 @@ import {
 import { readLease } from "../../src/regrafter/lease.js";
 import { saveRun } from "../../src/regrafter/runs.js";
 
-async function fixture(): Promise<{ repo: string; stateDir: string; appFile: string }> {
+async function fixture(): Promise<{
+  repo: string;
+  stateDir: string;
+  appFile: string;
+  configFile: string;
+}> {
   const root = await mkdtemp(join(tmpdir(), "regrafter-test-"));
   const repo = join(root, "repo");
   await mkdir(repo);
@@ -32,7 +37,7 @@ async function fixture(): Promise<{ repo: string; stateDir: string; appFile: str
   const appFile = join(root, "pi-factory.toml");
   await writeFile(join(root, "fake-pi.mjs"), "process.exitCode = 0;\n");
   await writeFile(appFile, manifest(join(root, "pi")));
-  return { repo, stateDir, appFile };
+  return { repo, stateDir, appFile, configFile: join(root, "config.json") };
 }
 
 function git(cwd: string, args: readonly string[]): string {
@@ -113,6 +118,59 @@ it("completes a run and releases the repository lease", async () => {
   expect(run.authority.overlay_commits).toBe(true);
   expect(authoritySent).toBe(true);
   expect(await readLease(value.stateDir, run.git_common_dir)).toBeUndefined();
+});
+
+it("launches the ambient profile when a model is configured", async () => {
+  const value = await fixture();
+  await writeFile(
+    value.configFile,
+    `${JSON.stringify({ version: 1, auth: "pi", model: "huggingface/moonshotai/Kimi-K3:fireworks-ai" })}\n`
+  );
+  vi.stubEnv("PI_CODING_AGENT_DIR", "/tmp/host-pi-agent");
+  try {
+    let seen: PiLaunchPlan | undefined;
+    const launcher: AgentLauncher = async (plan, logPath) => {
+      seen = plan;
+      return await launcherFor(report())(plan, logPath);
+    };
+    const result = await startRun(value.repo, "Update all grafts.", options(value, launcher));
+    expect(result.state).toBe("completed");
+    expect(seen?.env["PI_CODING_AGENT_DIR"]).toBe("/tmp/host-pi-agent");
+    expect(seen?.env["PI_CODING_AGENT_SESSION_DIR"]).toContain("sessions");
+    const args = seen?.args ?? [];
+    expect(args).toContain("--no-extensions");
+    expect(args).toContain("--no-skills");
+    expect(args).toContain("--no-prompt-templates");
+    expect(args).toContain("--no-themes");
+    const providerIndex = args.indexOf("--provider");
+    expect(args[providerIndex + 1]).toBe("huggingface");
+    const modelIndex = args.indexOf("--model");
+    expect(args[modelIndex + 1]).toBe("moonshotai/Kimi-K3:fireworks-ai");
+    expect(args.some((arg) => arg.includes("pi-huggingface-oauth"))).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it("keeps the isolated profile without a config file", async () => {
+  const value = await fixture();
+  let seen: PiLaunchPlan | undefined;
+  const launcher: AgentLauncher = async (plan, logPath) => {
+    seen = plan;
+    return await launcherFor(report())(plan, logPath);
+  };
+  const result = await startRun(value.repo, "Update all grafts.", options(value, launcher));
+  expect(result.state).toBe("completed");
+  expect(seen?.env["PI_CODING_AGENT_DIR"]).toContain("pi-config-runtime");
+  expect(seen?.args).not.toContain("--no-extensions");
+});
+
+it("fails with guidance when the config has no model", async () => {
+  const value = await fixture();
+  await writeFile(value.configFile, '{"version":1,"auth":"pi"}\n');
+  await expect(
+    startRun(value.repo, "Update all grafts.", options(value, launcherFor(report())))
+  ).rejects.toThrow("regrafter config set model");
 });
 
 it("resumes one Pi session after a matching decision", async () => {
