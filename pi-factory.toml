@@ -7,7 +7,7 @@ state_dir = "~/.local/state/regrafter/pi"
 session_dir = "~/.local/state/regrafter/pi/sessions"
 pi_command = ["./scripts/regrafter-pi-with-path.mjs"]
 thinking = "high"
-tools = ["read", "bash", "edit", "write", "grep", "find", "ls"]
+tools = ["read", "bash", "edit", "write", "grep", "find", "ls", "regrafter_report"]
 system_prompt = "./regrafter/system.md"
 
 [provider]
