@@ -75,7 +75,8 @@
     "mutate": "stryker run",
     "slophammer": "slophammer-ts check .",
     "check": "npm run format && npm run lint && npm run typecheck && npm test && npm run coverage && npm run build && npm run package-smoke && npm run dry && npm run boundaries && npm run slophammer",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@osolmaz/pi-factory": "^0.5.0",
