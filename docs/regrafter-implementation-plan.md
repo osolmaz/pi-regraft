@@ -6,7 +6,7 @@ This plan implements the [Regrafter specification](regrafter-spec.md) inside `pi
 
 `pi-regraft` already provides the merge core and the `/regraft` command. It does not ship an executable for ordinary shell use.
 
-Pi Factory already resolves app bundles and launches Pi with the app root as `cwd`. It does not accept a separate target working directory or provide launch overrides for a headless app controller.
+pi-factory already resolves app bundles and launches Pi with the app root as `cwd`. It does not accept a separate target working directory or provide launch overrides for a headless app controller.
 
 OnurPi tracks four packages in `regraft.json` and preserves their pristine base commits. It installs `pi-regraft@0.1.0` from npm.
 
@@ -49,7 +49,7 @@ Validate the target path before writing runtime configuration. `plan` must show 
 
 ### Regrafter app
 
-Ship the Regrafter Pi Factory app and controller in the `pi-regraft` repository and npm package. Keep its source under a dedicated namespace so the app remains isolated without requiring a second release or dependency graph.
+Ship the Regrafter pi-factory app and controller in the `pi-regraft` repository and npm package. Keep its source under a dedicated namespace so the app remains isolated without requiring a second release or dependency graph.
 
 The integrated package contains:
 
@@ -74,7 +74,7 @@ The system prompt defines the update sequence, decision boundaries, Git rules, a
 
 The reporting extension registers only `regrafter_report`. The tool has a strict schema for `needs_decision`, `completed`, `blocked`, and `failed`, and it returns `terminate: true`. It does not edit files or call another model.
 
-The controller provides `start`, `send`, `inspect`, `list`, `attach`, and `abort`. It resolves the app through Pi Factory and runs Pi in a bounded headless mode. It opens or resumes the saved Pi session before printing the last valid report. `attach` opens the same session in Pi's TUI after checking that no controller process is working. The controller rejects a run that ends without a report.
+The controller provides `start`, `send`, `inspect`, `list`, `attach`, and `abort`. It resolves the app through pi-factory and runs Pi in a bounded headless mode. It opens or resumes the saved Pi session before printing the last valid report. `attach` opens the same session in Pi's TUI after checking that no controller process is working. The controller rejects a run that ends without a report.
 
 The run index and lease records live under the Regrafter app state directory. Writes use temporary files, atomic rename, restrictive permissions, and schema validation. The index stores paths and ids but no prompt copies, credentials, or repository file contents.
 
@@ -115,15 +115,15 @@ npm test
 npm pack --dry-run --json
 ```
 
-Install the generated tarball into a temporary project and run the compiled executable there. Do not publish until the Pi Factory and Regrafter integration tests consume the tarball successfully.
+Install the generated tarball into a temporary project and run the compiled executable there. Do not publish until the pi-factory and Regrafter integration tests consume the tarball successfully.
 
-### Pi Factory target directory
+### pi-factory target directory
 
-Implement `--cwd` and the launch override in Pi Factory. Test relative paths, absolute paths, spaces, missing directories, symlink aliases, and explicit app files. Use fake Pi commands and temporary directories as required by the repository.
+Implement `--cwd` and the launch override in pi-factory. Test relative paths, absolute paths, spaces, missing directories, symlink aliases, and explicit app files. Use fake Pi commands and temporary directories as required by the repository.
 
-Verify that app resources still resolve from the app root while Pi receives the target repository as its working directory. Ensure `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` remain controlled by Pi Factory.
+Verify that app resources still resolve from the app root while Pi receives the target repository as its working directory. Ensure `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` remain controlled by pi-factory.
 
-Run the full Pi Factory gate:
+Run the full pi-factory gate:
 
 ```bash
 npm run check
@@ -133,7 +133,7 @@ Run mutation tests before merge if the changed launch and CLI code is in the con
 
 ### Controller and reports
 
-Build the Regrafter app inside `pi-regraft` against the released Pi Factory dependency. Start with a fake Pi child process that emits known report events. Cover session creation and resume, malformed output, missing terminal reports, process interruption, and exit signal forwarding.
+Build the Regrafter app inside `pi-regraft` against the released pi-factory dependency. Start with a fake Pi child process that emits known report events. Cover session creation and resume, malformed output, missing terminal reports, process interruption, and exit signal forwarding.
 
 Implement the run index and repository lease. Test two path spellings for the same Git common directory, linked worktrees, an active competing run, an interrupted owner process, explicit abort, and a repository changed outside Regrafter while paused.
 
@@ -162,7 +162,7 @@ Model-independent CI should use a scripted provider or deterministic fake sessio
 
 ### Direct TUI workflow
 
-Launch the bundle through Pi Factory with a temporary repository as `--cwd`. Confirm that context files come from the target repository, bundle prompts come from the app root, `/session` uses the Regrafter session directory, and a person can answer a decision in a later TUI message. Attach to a controller-created run and verify that the TUI opens the same session and preserves the repository lease.
+Launch the bundle through pi-factory with a temporary repository as `--cwd`. Confirm that context files come from the target repository, bundle prompts come from the app root, `/session` uses the Regrafter session directory, and a person can answer a decision in a later TUI message. Attach to a controller-created run and verify that the TUI opens the same session and preserves the repository lease.
 
 No TUI-only state may be required for controller-driven resume.
 
@@ -187,7 +187,7 @@ Each repository change needs its own review because the ownership boundaries dif
 
 For `pi-regraft`, review the command as another adapter over the merge core and the Regrafter source as a separate orchestration namespace. Reject duplicated merge logic, any fallback that fetches an old upstream base, hidden product choices, automatic stale-lock deletion, or controller code that edits the target repository.
 
-For Pi Factory, review the change as generic target-directory and launch-plan support. Reject Regraft-specific fields, prompts, or run states in Pi Factory.
+For pi-factory, review the change as generic target-directory and launch-plan support. Reject Regraft-specific fields, prompts, or run states in pi-factory.
 
 For OnurPi, review only the delegation skill and pinned package changes. Confirm that no Regraft tool schema appears in ordinary sessions.
 
@@ -195,13 +195,13 @@ For OnurPi, review only the delegation skill and pinned package changes. Confirm
 
 Release the dependency before the integrated package:
 
-1. Publish the Pi Factory version that supports target working directories and launch overrides.
+1. Publish the pi-factory version that supports target working directories and launch overrides.
 2. Publish the `pi-regraft` version that includes the compiled Regraft command, Regrafter app, and controller.
 3. Add the optional driver skill and pin that `pi-regraft` version in OnurPi.
 
 Both projects are pre-1.0. These additions create new automation surfaces, so their release changes should follow each repository's pre-1.0 minor-version convention unless that convention changes before implementation.
 
-Use GitHub Release publication and trusted npm publishing. Verify each registry artifact and provenance statement. Test both the executable and Pi Factory installation before updating downstream pins.
+Use GitHub Release publication and trusted npm publishing. Verify each registry artifact and provenance statement. Test both the executable and pi-factory installation before updating downstream pins.
 
 ## Completion evidence
 
@@ -209,7 +209,7 @@ The implementation is complete when the following evidence is linked from the in
 
 - passing local and CI quality gates in every changed repository
 - packed-artifact tests for both executables
-- Pi Factory launch plans showing separate app and target roots
+- pi-factory launch plans showing separate app and target roots
 - controller logs for clean and decision runs, plus blocked, interrupted, and failed runs
 - a two-decision resume test using one Pi session
 - a real OnurPi delegation smoke test
