@@ -105,7 +105,7 @@ Regrafter keeps one Pi session and one repository lease for each update run. It
 can pause for several decisions and resume without losing the conversation or
 the exact repository state.
 
-Install the commands and Pi Factory, then install the app bundle:
+Install the commands and pi-factory, then install the app bundle:
 
 ```bash
 npm install -g pi-regraft @osolmaz/pi-factory

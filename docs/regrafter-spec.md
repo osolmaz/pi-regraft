@@ -6,7 +6,7 @@ A person may work with Regrafter directly. A main Pi agent may also drive Regraf
 
 ## User experience
 
-A direct session starts the Regrafter Pi Factory app in the repository being updated:
+A direct session starts the Regrafter pi-factory app in the repository being updated:
 
 ```bash
 pi-factory run regrafter --cwd /path/to/repository
@@ -52,7 +52,7 @@ regraft note <name> <text> [--json]
 
 The command never makes semantic choices. It can produce conflict markers and return a successful `needs_resolution` result when the mechanical merge completed but the overlay needs an agent.
 
-### Pi Factory app bundle
+### pi-factory app bundle
 
 The Regrafter app bundle ships inside `pi-regraft`. It owns its system prompt, enabled tools, extensions, model settings, and isolated Pi state. It uses Pi's normal session implementation and extension SDK.
 
@@ -62,7 +62,7 @@ The bundle includes one reporting extension. Its `regrafter_report` tool records
 
 ### Regrafter controller
 
-The `regrafter` executable starts and resumes headless Regrafter runs. It resolves the Pi Factory app, launches Pi against the target repository, waits until the agent reports a terminal state, and prints one JSON result. It can also list runs or attach a TUI to an idle run.
+The `regrafter` executable starts and resumes headless Regrafter runs. It resolves the pi-factory app, launches Pi against the target repository, waits until the agent reports a terminal state, and prints one JSON result. It can also list runs or attach a TUI to an idle run.
 
 The controller owns:
 
@@ -85,9 +85,9 @@ A small optional driver skill may teach a main agent the controller commands and
 
 ## Working directory separation
 
-A Pi Factory app has an app root that contains its manifest and prompt files along with its extensions. Regrafter also needs a target repository where its tools run. These paths have different meanings and must remain separate.
+A pi-factory app has an app root that contains its manifest and prompt files along with its extensions. Regrafter also needs a target repository where its tools run. These paths have different meanings and must remain separate.
 
-Pi Factory must support a launch working-directory override:
+pi-factory must support a launch working-directory override:
 
 ```bash
 pi-factory run regrafter --cwd /path/to/repository
@@ -96,7 +96,7 @@ pi-factory plan regrafter --cwd /path/to/repository
 
 Bundle resources continue to resolve relative to the app root. Pi's `cwd`, context-file discovery, built-in tools, project trust, and session identity use the target repository.
 
-The Pi Factory library must expose the same override through its launch-plan API so the Regrafter controller can launch headless sessions without reconstructing Pi Factory behavior.
+The pi-factory library must expose the same override through its launch-plan API so the Regrafter controller can launch headless sessions without reconstructing pi-factory behavior.
 
 ## Run lifecycle
 
@@ -289,7 +289,7 @@ The controller treats app bundle files and target repository files as separate t
 
 Regrafter does not replace Regraft's merge implementation. It does not fetch missing historical bases, invent local intent, run multiple updates against a dirty worktree, or choose a product direction because one option is easier.
 
-Pi Factory continues to own app resolution and launch preparation. Pi owns the agent runtime and sessions. Within the `pi-regraft` package, Regraft owns vendoring state and merge behavior while Regrafter owns its prompt, controller, decision protocol, and repository lease. This code boundary does not require a separate repository or package.
+pi-factory continues to own app resolution and launch preparation. Pi owns the agent runtime and sessions. Within the `pi-regraft` package, Regraft owns vendoring state and merge behavior while Regrafter owns its prompt, controller, decision protocol, and repository lease. This code boundary does not require a separate repository or package.
 
 ## Acceptance criteria
 

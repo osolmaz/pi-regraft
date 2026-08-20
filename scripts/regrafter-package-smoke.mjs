@@ -46,7 +46,7 @@ try {
     })
   );
   if (plan.appRoot !== packageRoot || plan.launch?.cwd !== project) {
-    throw new Error("packed Pi Factory app did not separate its app root and target directory");
+    throw new Error("packed pi-factory app did not separate its app root and target directory");
   }
   await access(join(packageRoot, "scripts", "regrafter-pi-with-path.mjs"), constants.X_OK);
   const bundledRegraft = join(packageRoot, "scripts", "bin", "regraft");
