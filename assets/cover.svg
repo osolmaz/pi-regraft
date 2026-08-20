@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" role="img" aria-label="pi-regraft: an upstream commit lane grafted into your repository lane, with local edits kept between import and update">
+  <defs>
+    <style>
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .sans { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .lane { stroke: #30363d; stroke-width: 2; }
+      .lanelabel { fill: #8b949e; font-size: 12px; }
+      .commitlabel { fill: #8b949e; font-size: 11px; text-anchor: middle; }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L7,4 L0,8 Z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="958" height="318" rx="16" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+
+  <!-- Left: name, tagline, command line (content spans y 76-244, centered on 160) -->
+  <g>
+    <text x="56" y="110" class="mono" font-size="46" font-weight="700">
+      <tspan fill="#58a6ff">pi</tspan><tspan fill="#e6edf3">-regraft</tspan>
+    </text>
+    <text x="56" y="148" class="sans" font-size="17" fill="#8b949e">Vendor upstream code as plain files in your repo.</text>
+    <text x="56" y="174" class="sans" font-size="17" fill="#8b949e">Re-pull updates without losing your local edits.</text>
+
+    <rect x="56" y="200" width="228" height="44" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="74" y="228" class="mono" font-size="16">
+      <tspan fill="#3fb950">$</tspan><tspan fill="#e6edf3" dx="8">regraft update foo</tspan>
+    </text>
+  </g>
+
+  <!-- Right: two-lane graft diagram -->
+  <g>
+    <!-- upstream lane -->
+    <text x="504" y="96" class="mono lanelabel">upstream</text>
+    <line class="lane" x1="582" y1="92" x2="896" y2="92"/>
+    <circle cx="620" cy="92" r="7" fill="#58a6ff"/>
+    <circle cx="740" cy="92" r="7" fill="#58a6ff"/>
+    <circle cx="860" cy="92" r="7" fill="#58a6ff"/>
+
+    <!-- graft edges -->
+    <line x1="620" y1="103" x2="620" y2="191" stroke="#8b949e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+    <line x1="860" y1="103" x2="860" y2="191" stroke="#8b949e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+
+    <!-- your repo lane -->
+    <text x="504" y="206" class="mono lanelabel">your repo</text>
+    <line class="lane" x1="582" y1="202" x2="896" y2="202"/>
+    <circle cx="620" cy="202" r="7" fill="#58a6ff"/>
+    <circle cx="700" cy="202" r="7" fill="#3fb950"/>
+    <circle cx="760" cy="202" r="7" fill="#3fb950"/>
+    <circle cx="860" cy="202" r="7" fill="#58a6ff"/>
+
+    <!-- commit labels -->
+    <text x="620" y="232" class="mono commitlabel">import</text>
+    <text x="730" y="232" class="mono commitlabel" fill="#3fb950">local edits</text>
+    <text x="860" y="232" class="mono commitlabel">update</text>
+  </g>
+</svg>
