@@ -1,5 +1,9 @@
 # pi-regraft
 
+<p align="center">
+  <img src="assets/cover.svg" alt="pi-regraft: an upstream commit lane grafted into your repository lane, with local edits kept between import and update" width="880">
+</p>
+
 `pi-regraft` is a Pi extension for vendoring code from Git repositories. It lets
 you change the copied code in place and pull later upstream changes without
 losing your work.
