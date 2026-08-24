@@ -251,8 +251,10 @@ async function abortRunLocked(
   if (!sameSnapshot(current, run.last_observed)) {
     throw new Error("repository changed since the last verified Regrafter state; lease retained");
   }
+  const idle = { ...run };
+  delete idle.rejected_completion;
   const aborted: RunRecord = {
-    ...run,
+    ...idle,
     state: "aborted",
     updated_at: now(),
     last_observed: current

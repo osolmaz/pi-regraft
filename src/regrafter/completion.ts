@@ -164,7 +164,28 @@ async function graftCommitProblems(
   if (starting.local_overlay && validOverlays.length === 0) {
     problems.push(`updated graft "${updated.graft}" requires an overlay commit`);
   }
+  problems.push(
+    ...baseOnlyPositionProblems(
+      starting,
+      updated.graft,
+      validOverlays.length,
+      base.index,
+      report.commits.length
+    )
+  );
   return problems;
+}
+
+function baseOnlyPositionProblems(
+  starting: GraftBaselineEntry,
+  graft: string,
+  overlayCount: number,
+  baseIndex: number,
+  commitCount: number
+): string[] {
+  return !starting.local_overlay && overlayCount === 0 && baseIndex !== commitCount - 1
+    ? [`updated graft "${graft}" has a base-only commit that is not the final run commit`]
+    : [];
 }
 
 function overlayAuthorityProblems(run: RunRecord, graft: string, overlayCount: number): string[] {

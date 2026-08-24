@@ -272,6 +272,40 @@ it("rejects a final manifest change omitted from updated grafts", async () => {
   expect(problems).toContain('final manifest changes graft "bar" outside updated_grafts');
 });
 
+it("rejects a base-only update before the final run commit", async () => {
+  const value = await fixture();
+  const record = run(value);
+  const foo = record.graft_baseline?.grafts.find((entry) => entry.graft === "foo");
+  if (foo === undefined) throw new Error("missing foo baseline fixture");
+  foo.local_overlay = false;
+  await writeFile(join(value.repo, "vendor", "bar", "index.ts"), "export const bar = 'new';\n");
+  await writeFile(join(value.repo, "regraft.json"), manifest(NEW_UPSTREAM, BAR_NEW_UPSTREAM));
+  git(value.repo, ["add", "."]);
+  git(value.repo, [
+    "commit",
+    "--amend",
+    "-m",
+    "chore(regraft): import upstream base",
+    "-m",
+    `Regraft-Name: bar\nRegraft-Upstream: ${BAR_NEW_UPSTREAM}`
+  ]);
+  const finalHead = git(value.repo, ["rev-parse", "HEAD"]);
+  const invalid = report(value);
+  invalid.commits = [
+    { kind: "base", graft: "foo", sha: value.newBase },
+    { kind: "base", graft: "bar", sha: finalHead }
+  ];
+  invalid.updated_grafts.push({
+    graft: "bar",
+    old_upstream: BAR_OLD_UPSTREAM,
+    new_upstream: BAR_NEW_UPSTREAM
+  });
+  const problems = await completionProblems(record, invalid, await snapshotRepository(value.repo));
+  expect(problems).toContain(
+    'updated graft "foo" has a base-only commit that is not the final run commit'
+  );
+});
+
 it("turns malformed final graft data into a validation problem", async () => {
   const value = await fixture();
   await writeFile(join(value.repo, "regraft.json"), "{\n");
