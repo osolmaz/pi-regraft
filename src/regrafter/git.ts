@@ -51,7 +51,7 @@ export async function snapshotRepository(repository: string): Promise<Repository
   };
 }
 
-function parseDirtyPaths(status: string): string[] {
+export function parseDirtyPaths(status: string): string[] {
   const entries = status.split("\0");
   const paths: string[] = [];
   for (let index = 0; index < entries.length; index += 1) {
