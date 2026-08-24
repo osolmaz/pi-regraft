@@ -27,6 +27,8 @@ regrafter inspect <run-id> --json
 regrafter list [--repo /path/to/repository] --json
 regrafter attach <run-id>
 regrafter abort <run-id> --json
+regrafter handoff prepare <run-id> --json
+regrafter handoff accept <run-id> --evidence <sha256> --actor <id> --reason-file <path> --json
 ```
 
 Each controller command is a bounded process. Regrafter does not require a daemon or background service. Pi session files and a small run index under the Regrafter state directory preserve the conversation and the link to the target repository.
@@ -71,6 +73,9 @@ The controller owns:
 - repository leases
 - process exit and interruption recovery
 - validation of decision ids when a run resumes
+- capture of the starting graft baseline
+- validation of proposed completion reports and their Git commit chains
+- evidence-bound ownership handoff and lease release
 - conversion of the final report tool result into controller JSON
 
 The controller does not interpret merge conflicts or edit files.
@@ -102,20 +107,21 @@ The pi-factory library must expose the same override through its launch-plan API
 
 A run has one stable id and one Pi session. It moves through these states:
 
-| State | Meaning |
-| --- | --- |
-| `ready` | The run exists and may accept its first or next instruction. |
-| `working` | A controller process currently owns the run. |
-| `needs_decision` | Regrafter reached a safe pause and needs an answer. |
-| `blocked` | Work cannot continue without an external change or missing input. |
-| `completed` | The requested scope is complete and verified. |
-| `failed` | Regrafter could not complete or restore a safe state. |
-| `aborted` | The driver ended the run and released its repository lease. |
-| `interrupted` | A controller process exited before recording a terminal report. |
+| State            | Meaning                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `ready`          | The run exists and may accept its first or next instruction.                                            |
+| `working`        | A controller process currently owns the run.                                                            |
+| `needs_decision` | Regrafter reached a safe pause and needs an answer.                                                     |
+| `blocked`        | Work cannot continue without an external change or missing input.                                       |
+| `completed`      | The controller accepted a clean report with a valid commit chain and released the lease.                |
+| `failed`         | Regrafter could not complete or restore a safe state after an unexpected failure.                       |
+| `aborted`        | The driver ended the run from its last verified repository snapshot and released the lease.             |
+| `interrupted`    | A controller process exited before recording a terminal report.                                         |
+| `handed_off`     | An operator accepted responsibility for a named repository state and the controller released the lease. |
 
-`start` creates the run and sends the initial request. `send` reopens the same Pi session and supplies a decision or further instruction. A run may pass through `needs_decision` several times.
+`start` creates the run and sends the initial request. Before Pi starts, the controller records a network-free graft baseline from local Git and `regraft.json`. The baseline names each graft, destination, pinned upstream commit, local pristine base commit, and whether the starting HEAD contains a committed local overlay under that destination. `send` reopens the same Pi session and supplies a decision or further instruction. A run may pass through `needs_decision` several times.
 
-The controller waits until Pi settles and Regrafter emits a terminal report. A controller invocation exits after that report. No agent process remains running between steps.
+The controller waits until Pi settles and Regrafter emits a terminal report. The report proposes the next run state. The controller decides whether the proposal satisfies the completion contract before it writes a terminal state. A controller invocation exits after it records the accepted or corrected state. No agent process remains running between steps.
 
 An interrupted run must be inspected before it resumes. The controller compares the saved repository state with the current HEAD and branch, then checks the worktree, index, and Regraft manifest. It resumes only when the state still matches or Regraft's recovery checks prove that continuation is safe.
 
@@ -125,7 +131,7 @@ Only one active Regrafter run may own a repository. The controller keys the leas
 
 The lease remains held while a run waits for a decision. Other processes may inspect the repository, but the driving agent must not edit it until Regrafter completes, aborts, or reports that it has released ownership.
 
-A lease records the run id, repository path, branch, starting HEAD, process id while working, and last update time. Lease records live in the Regrafter state directory, outside the target repository. A stale lease is never removed solely because time passed. `regrafter abort` or an explicit recovery command verifies repository state before releasing it.
+A lease records the run id, repository path, branch, starting HEAD, process id while working, and last update time. Lease records live in the Regrafter state directory, outside the target repository. A stale lease is never removed solely because time passed. Lease release requires accepted clean completion, an `abort` from the last verified snapshot, or an evidence-bound ownership handoff.
 
 Git's own index locks remain authoritative during Git operations. The Regrafter lease prevents higher-level workflows from passing the clean-worktree check concurrently and then changing the same paths.
 
@@ -147,6 +153,74 @@ For a broad request, Regrafter follows this sequence:
 12. Report the commits, checks, remaining risks, and upstream revisions.
 
 The pristine base commit created by Regraft is never amended, squashed, or dropped. Regrafter keeps observed upstream state, its recommendation, and the driver's approved choice separate.
+
+## Completion validation
+
+A `completed` report is a proposal. The controller accepts it only when the repository is clean and the report agrees with the run's starting graft baseline and current Git history.
+
+The controller checks all of the following facts:
+
+- No reported check failed.
+- Every reported commit exists and has the reported base or overlay role.
+- The reported commits form the exact first-parent chain from the starting HEAD to the observed HEAD. The chain contains no missing, reordered, squashed, or extra run commit.
+- Each updated graft reports upstream revisions that agree with the starting baseline and final manifest.
+- Every pristine base commit remains in branch ancestry.
+- A graft that had a committed local overlay at the start has an overlay commit after its new pristine base. A base-only result is valid only when no local overlay was required and the base is the final run commit.
+
+These checks establish repository structure and authority. They do not decide whether the merged behavior is correct.
+
+## Protocol rejection
+
+An invalid completion report produces a controller-authored `blocked` state. The controller keeps the verified Pi session, rejected report, starting baseline, observed repository snapshot, protocol reasons, next action, and repository lease. It does not turn an expected completion-contract violation into an unresumable `failed` state.
+
+When overlay work remains and the run lacks commit authority, the next action may grant `commits` authority and resume the same session. Regrafter must report `needs_decision` or `blocked` while `overlay_pending` is true and commit authority is absent. The controller still checks the result because prompt compliance is not a safety boundary.
+
+Changes made outside Regrafter can make direct resume unsafe. The controller then rejects `send` and `abort` until the repository returns to the saved snapshot or an operator accepts ownership through the handoff command.
+
+## Ownership handoff
+
+Ownership handoff lets an operator take responsibility for repository work that changed after Regrafter's last verified snapshot. Handoff does not verify, commit, reset, clean, or endorse that work. It grants no Git or hosting authority.
+
+The public controller API has two operations:
+
+```ts
+prepareHandoff(runId);
+acceptHandoff(runId, evidence, actor, reason);
+```
+
+The CLI exposes the same operations:
+
+```bash
+regrafter handoff prepare <run-id> --json
+regrafter handoff accept <run-id> \
+  --evidence <sha256> \
+  --actor <id> \
+  --reason-file <path> \
+  --json
+```
+
+`prepareHandoff` runs under the existing run lock. It rejects a live controller process, verifies that the named run owns the lease, and accepts only documented leased recovery states. It returns a non-secret candidate digest together with the prior verified snapshot and current repository evidence.
+
+The evidence binds the schema tag, run id, canonical repository and Git common directory, exact lease record, run update identity, prior snapshot, current branch and HEAD, index state, status codes and paths, and type, mode, symlink-target, and content hashes for changed and untracked paths. File contents are streamed into hashes and are never stored in the run index. Evidence capture compares Git state before and after hashing and stops if the repository changes during capture.
+
+`acceptHandoff` reacquires the run lock and repeats the process and lease checks. It computes the evidence again and requires an exact digest match. Actor is a nonempty audit label of at most 128 UTF-8 bytes. Reason comes from a file and contains at most 2048 UTF-8 bytes. These values record operator intent; they do not provide authentication.
+
+## Durable handoff release
+
+An accepted handoff is written before its lease is removed. The controller uses this order:
+
+1. Save `handed_off` with the actor, reason, acceptance time, prior snapshot, accepted evidence, digest, and release status `pending`.
+2. Read the lease again and verify that the same run still owns it.
+3. Release only that run's lease.
+4. Save the release completion and time.
+
+A retry with the same accepted digest completes a pending lease release or final audit write. Failure before the first audit write leaves the lease intact. Failure during release leaves a durable pending handoff and the old lease. Failure after release can repair the audit without touching a lease owned by a later run. No handoff path uses lease age, process age, a force flag, or direct lease-file deletion.
+
+## August 24 recovery case
+
+The recovery contract covers the run that exposed the missing handoff operation. That run had no overlay-commit authority. Regraft created pristine base commit `afb476b`, restored a dirty local overlay, and Regrafter reported `completed`. The controller rejected the dirty completion and kept the lease. Later repository work changed the branch and HEAD, so exact-snapshot `abort` refused to release it.
+
+The regression test recreates that sequence. It proves that the invalid completion becomes resumable `blocked` work on new runs, that changed repository evidence prevents resume and abort, and that a reviewed handoff records responsibility before it releases the named lease.
 
 ## Decision boundaries
 
@@ -249,9 +323,9 @@ A terminal result has this common shape:
 }
 ```
 
-`decision` is present only for `needs_decision`. Each commit entry names its `base` or `overlay` role and associated graft. Each check entry names the command, scope, outcome, and exit code. `completed` includes updated grafts and their old and new upstream commits. `blocked` includes the blocker, evidence gathered, attempted safe actions, and the input or external change needed. `failed` also describes recovery status.
+`decision` is present only for `needs_decision`. Each commit entry names its `base` or `overlay` role and associated graft. Each check entry names the command, scope, outcome, and exit code. `completed` includes updated grafts and their old and new upstream commits. `blocked` includes the blocker, evidence gathered, attempted safe actions, and the input or external change needed. A controller-authored completion block also preserves the rejected report and starting baseline. `failed` describes recovery after an unexpected failure. `handed_off` includes the bounded audit record and release state.
 
-Unknown top-level fields are rejected for controller input. Consumers must reject unsupported `schema_version` values.
+Unknown top-level fields are rejected for controller input. Consumers must reject unsupported `schema_version` values. The strict run schema remains version 1. Existing version-1 run records remain directly readable for inspection and handoff. New runs include the graft baseline. An existing run without that baseline cannot use inferred completion evidence; it must restart from a clean state or use explicit handoff.
 
 ## Direct and driven sessions
 
@@ -271,11 +345,11 @@ Pushing, opening a pull request, merging, changing a public API, removing local 
 
 ## Failure and recovery
 
-Regrafter reports `blocked` for expected conditions such as a dirty starting worktree, detached HEAD, missing base, moved source directory, unavailable credentials, or a failing test that needs an owner decision.
+Regrafter reports `blocked` for expected conditions such as a dirty starting worktree, detached HEAD, missing base, moved source directory, unavailable credentials, a failing test that needs an owner decision, or a proposed completion that fails the controller contract. A controller-authored completion block remains resumable while its saved repository snapshot and lease still match.
 
-It reports `failed` when an operation ends in an unexpected state or rollback cannot restore the repository. The report must name the current HEAD, dirty paths, created commits, attempted recovery, and the next manual inspection step.
+It reports `failed` when an operation ends in an unexpected state or rollback cannot restore the repository. The report must name the current HEAD, dirty paths, created commits, attempted recovery, and the next manual inspection step. Existing failed and interrupted runs may use ownership handoff when their repository changed outside Regrafter.
 
-`abort` does not reset repository changes automatically. It asks the Regraft core to use its verified recovery path when one exists. It records `aborted` only after the repository reaches a verified handoff state and the lease is released. If safe handoff fails, the run stays `blocked`, preserves the evidence, and keeps the lease until the driver explicitly accepts ownership.
+`abort` does not reset repository changes. It records `aborted` only when the current branch, HEAD, and dirty paths match the last verified Regrafter snapshot and the named lease is released. `handoff prepare` and `handoff accept` cover external reconciliation. The accepted audit transfers responsibility for the bound state and then releases the lease. Manual lease deletion, force unlock, time-based cleanup, and PID-only cleanup are unsupported.
 
 ## Security and trust
 
@@ -287,7 +361,7 @@ The controller treats app bundle files and target repository files as separate t
 
 ## Boundaries
 
-Regrafter does not replace Regraft's merge implementation. It does not fetch missing historical bases, invent local intent, run multiple updates against a dirty worktree, or choose a product direction because one option is easier.
+Regrafter does not replace Regraft's merge implementation. It does not fetch missing historical bases, invent local intent, run multiple updates against a dirty worktree, choose a product direction because one option is easier, or modify repository work during ownership handoff.
 
 pi-factory continues to own app resolution and launch preparation. Pi owns the agent runtime and sessions. Within the `pi-regraft` package, Regraft owns vendoring state and merge behavior while Regrafter owns its prompt, controller, decision protocol, and repository lease. This code boundary does not require a separate repository or package.
 
@@ -303,5 +377,12 @@ The first release is complete when all of these behaviors are demonstrated:
 - One run can request more than one decision without losing context or repository ownership.
 - A killed controller process produces an inspectable `interrupted` run that can be safely resumed or aborted.
 - A second run cannot acquire the same repository while the first run is active.
+- A false `completed` report with a dirty or invalid commit chain becomes a resumable controller-authored `blocked` state.
+- Missing overlay-commit authority leads to `needs_decision` or `blocked`, and later explicit authority resumes the same Pi session.
+- Handoff evidence changes when the branch, HEAD, index, status, file type, mode, symlink target, or changed content changes.
+- Handoff rejects a live process, wrong run, wrong lease, stale evidence, and unsupported state.
+- An accepted handoff records its audit before lease release and retries safely across each partial-failure boundary.
+- The August 24 run sequence ends with one durable `handed_off` audit and no old lease.
+- Existing clean completion and exact-snapshot `abort` behavior remain unchanged.
 - Unrelated Pi sessions receive no Regraft tool schema or Regrafter prompt text.
 - No change to Pi core, Pi session schemas, or Regraft's committed-base format is required.
