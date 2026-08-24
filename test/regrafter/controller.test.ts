@@ -446,6 +446,22 @@ it("keeps invalid dirty completion resumable and leased", async () => {
   expect(await readLease(value.stateDir, run.git_common_dir)).toBeUndefined();
 });
 
+it("clears rejected completion state before an attached retry", async () => {
+  const value = await fixture();
+  const dirtyCompletion: AgentLauncher = async (plan, logPath) => {
+    await writeFile(join(value.repo, "uncommitted.txt"), "not done\n");
+    return await launcherFor(report())(plan, logPath);
+  };
+  const blocked = await startRun(value.repo, "Update.", options(value, dirtyCompletion));
+  await writeFile(
+    join(dirname(value.appFile), "fake-pi.mjs"),
+    `import { rmSync, writeFileSync } from "node:fs"; rmSync("uncommitted.txt"); writeFileSync(process.env.REGRAFTER_REPORT_FILE, ${JSON.stringify(JSON.stringify(report()))});\n`
+  );
+  const completed = await attachRun(blocked.run_id, value);
+  expect(completed.state).toBe("completed");
+  expect(completed.rejected_completion).toBeUndefined();
+});
+
 it("rejects stale decisions and aborting a working run", async () => {
   const value = await fixture();
   const paused = await startRun(

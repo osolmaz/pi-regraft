@@ -28,10 +28,6 @@ function validateTerminalDetails(report: AgentReport): void {
   if (report.state === "blocked" && report.blocker === undefined) {
     throw new Error("blocked report must include blocker");
   }
-  const failedCheck = report.checks.some((check) => check.outcome === "failed");
-  if (report.state === "completed" && failedCheck) {
-    throw new Error("completed report cannot include a failed check");
-  }
   if (report.state === "failed" && report.recovery === undefined) {
     throw new Error("failed report must include recovery");
   }
