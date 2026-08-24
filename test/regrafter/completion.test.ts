@@ -9,33 +9,38 @@ import type { AgentReport, RunRecord } from "../../src/regrafter/types.js";
 
 const OLD_UPSTREAM = "1".repeat(40);
 const NEW_UPSTREAM = "2".repeat(40);
+const BAR_OLD_UPSTREAM = "3".repeat(40);
+const BAR_NEW_UPSTREAM = "4".repeat(40);
 
 function git(cwd: string, args: readonly string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function manifest(upstream: string): string {
-  return `${JSON.stringify(
-    {
-      version: 1,
-      grafts: [
-        {
-          name: "foo",
-          dest: "vendor/foo",
-          source: { url: "https://example.invalid/foo.git", ref: "main", subdir: "." },
-          commit: upstream,
-          notes: []
-        }
-      ]
-    },
-    null,
-    2
-  )}\n`;
+function manifest(fooUpstream: string, barUpstream = BAR_OLD_UPSTREAM): string {
+  return manifestDocument([
+    graft("foo", "vendor/foo", fooUpstream),
+    graft("bar", "vendor/bar", barUpstream)
+  ]);
+}
+
+function manifestDocument(grafts: ReadonlyArray<Record<string, unknown>>): string {
+  return `${JSON.stringify({ version: 1, grafts }, null, 2)}\n`;
+}
+
+function graft(name: string, dest: string, commit: string): Record<string, unknown> {
+  return {
+    name,
+    dest,
+    source: { url: `https://example.invalid/${name}.git`, ref: "main", subdir: "." },
+    commit,
+    notes: []
+  };
 }
 
 async function fixture(): Promise<{
   repo: string;
   oldBase: string;
+  barBase: string;
   startingHead: string;
   newBase: string;
   overlay: string;
@@ -44,6 +49,21 @@ async function fixture(): Promise<{
   git(repo, ["init", "-b", "main"]);
   git(repo, ["config", "user.name", "Test"]);
   git(repo, ["config", "user.email", "test@example.com"]);
+  await mkdir(join(repo, "vendor", "bar"), { recursive: true });
+  await writeFile(join(repo, "vendor", "bar", "index.ts"), "export const bar = 'old';\n");
+  await writeFile(
+    join(repo, "regraft.json"),
+    manifestDocument([graft("bar", "vendor/bar", BAR_OLD_UPSTREAM)])
+  );
+  git(repo, ["add", "."]);
+  git(repo, [
+    "commit",
+    "-m",
+    "chore(regraft): import upstream base",
+    "-m",
+    `Regraft-Name: bar\nRegraft-Upstream: ${BAR_OLD_UPSTREAM}`
+  ]);
+  const barBase = git(repo, ["rev-parse", "HEAD"]);
   await mkdir(join(repo, "vendor", "foo"), { recursive: true });
   await writeFile(join(repo, "vendor", "foo", "index.ts"), "export const value = 'old';\n");
   await writeFile(join(repo, "regraft.json"), manifest(OLD_UPSTREAM));
@@ -78,6 +98,7 @@ async function fixture(): Promise<{
   return {
     repo,
     oldBase,
+    barBase,
     startingHead,
     newBase,
     overlay: git(repo, ["rev-parse", "HEAD"])
@@ -106,6 +127,13 @@ function run(value: Awaited<ReturnType<typeof fixture>>): RunRecord {
           upstream: OLD_UPSTREAM,
           local_base: value.oldBase,
           local_overlay: true
+        },
+        {
+          graft: "bar",
+          dest: "vendor/bar",
+          upstream: BAR_OLD_UPSTREAM,
+          local_base: value.barBase,
+          local_overlay: false
         }
       ]
     }
@@ -229,6 +257,19 @@ it("rejects inconsistent graft revisions and missing base reports", async () => 
   expect(problems.some((problem) => problem.includes("wrong old upstream"))).toBe(true);
   expect(problems.some((problem) => problem.includes("final manifest"))).toBe(true);
   expect(problems.some((problem) => problem.includes("exactly one pristine base"))).toBe(true);
+});
+
+it("rejects a final manifest change omitted from updated grafts", async () => {
+  const value = await fixture();
+  const record = run(value);
+  await writeFile(join(value.repo, "regraft.json"), manifest(NEW_UPSTREAM, BAR_NEW_UPSTREAM));
+  git(value.repo, ["add", "regraft.json"]);
+  git(value.repo, ["commit", "--amend", "--no-edit"]);
+  const amended = report(value);
+  const finalHead = git(value.repo, ["rev-parse", "HEAD"]);
+  amended.commits[1] = { kind: "overlay", graft: "foo", sha: finalHead };
+  const problems = await completionProblems(record, amended, await snapshotRepository(value.repo));
+  expect(problems).toContain('final manifest changes graft "bar" outside updated_grafts');
 });
 
 it("turns malformed final graft data into a validation problem", async () => {

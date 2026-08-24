@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
@@ -71,6 +71,12 @@ function options(value: { stateDir: string; appFile: string }): ControllerOption
   return { stateDir: value.stateDir, appFile: value.appFile };
 }
 
+async function repointGitDirectory(repository: string): Promise<void> {
+  const moved = `${repository}.git-repointed`;
+  await rename(join(repository, ".git"), moved);
+  await writeFile(join(repository, ".git"), `gitdir: ${moved}\n`);
+}
+
 async function savePendingHandoff(
   stateDir: string,
   run: RunRecord,
@@ -133,6 +139,61 @@ it("recovers the August dirty-completion lease through an audited handoff", asyn
     options(value)
   );
   expect(retried.handoff?.release).toBe("released");
+});
+
+it("accepts an evidence-bound handoff from detached HEAD", async () => {
+  const value = await fixture();
+  const blocked = await startRun(value.repo, "Update.", {
+    ...options(value),
+    launcher: dirtyLauncher(value.repo)
+  });
+  git(value.repo, ["checkout", "--detach"]);
+  const prepared = await prepareHandoff(blocked.run_id, options(value));
+  expect(prepared.current.snapshot.branch).toBe("(detached)");
+  const accepted = await acceptHandoff(
+    blocked.run_id,
+    prepared.evidence,
+    "test-operator",
+    "Accepted detached repository state.",
+    options(value)
+  );
+  expect(accepted.state).toBe("handed_off");
+  expect(await readLease(value.stateDir, accepted.git_common_dir)).toBeUndefined();
+});
+
+it("rejects a repointed Git directory during handoff preparation", async () => {
+  const value = await fixture();
+  const blocked = await startRun(value.repo, "Update.", {
+    ...options(value),
+    launcher: dirtyLauncher(value.repo)
+  });
+  const run = await inspectRun(blocked.run_id, options(value));
+  await repointGitDirectory(value.repo);
+  await expect(prepareHandoff(run.run_id, options(value))).rejects.toThrow(
+    "repository identity changed"
+  );
+  expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
+});
+
+it("rejects a repointed Git directory during handoff acceptance", async () => {
+  const value = await fixture();
+  const blocked = await startRun(value.repo, "Update.", {
+    ...options(value),
+    launcher: dirtyLauncher(value.repo)
+  });
+  const run = await inspectRun(blocked.run_id, options(value));
+  const prepared = await prepareHandoff(run.run_id, options(value));
+  await repointGitDirectory(value.repo);
+  await expect(
+    acceptHandoff(
+      run.run_id,
+      prepared.evidence,
+      "test-operator",
+      "Accept reviewed state.",
+      options(value)
+    )
+  ).rejects.toThrow("repository identity changed");
+  expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
 });
 
 it("binds acceptance to the prepared repository state", async () => {
