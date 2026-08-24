@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
@@ -64,6 +64,26 @@ it("binds staged, untracked, and symlink state", async () => {
     const linked = await captureRepositoryEvidence(repo);
     expect(linked.content_sha256).not.toBe(untracked.content_sha256);
   }
+});
+
+it("binds changed bytes inside an untracked embedded repository", async () => {
+  const repo = await repository();
+  const embedded = join(repo, "embedded");
+  await mkdir(embedded);
+  git(embedded, ["init", "-b", "main"]);
+  git(embedded, ["config", "user.name", "Test"]);
+  git(embedded, ["config", "user.email", "test@example.com"]);
+  const tracked = join(embedded, "tracked.txt");
+  await writeFile(tracked, "embedded-a\n");
+  git(embedded, ["add", "tracked.txt"]);
+  git(embedded, ["commit", "-m", "chore: initialize embedded repository"]);
+  const first = await captureRepositoryEvidence(repo);
+  await writeFile(tracked, "embedded-b\n");
+  const second = await captureRepositoryEvidence(repo);
+  expect(second.snapshot).toEqual(first.snapshot);
+  expect(second.status_sha256).toBe(first.status_sha256);
+  expect(second.index_sha256).toBe(first.index_sha256);
+  expect(second.content_sha256).not.toBe(first.content_sha256);
 });
 
 it("binds changed bytes inside a dirty submodule", async () => {

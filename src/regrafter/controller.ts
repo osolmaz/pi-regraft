@@ -385,6 +385,10 @@ function assertAuditText(actor: string, reason: string): void {
   if (reason.trim() === "" || Buffer.byteLength(reason, "utf8") > 2048) {
     throw new Error("handoff reason must contain 1 to 2048 UTF-8 bytes");
   }
+  const secrets = sensitiveValues(process.env);
+  if (redactText(actor, secrets) !== actor || redactText(reason, secrets) !== reason) {
+    throw new Error("handoff audit text must not contain credentials");
+  }
 }
 
 function assertMatchingHandoff(

@@ -9,7 +9,8 @@ import type { HandoffCandidate, LeaseRecord, RepositoryEvidence, RunRecord } fro
 const SHA256 = /^[0-9a-f]{64}$/u;
 const MAX_CAPTURED_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-type SubmoduleState = {
+type NestedRepositoryKind = "submodule" | "embedded_repository";
+type NestedRepositoryState = {
   head: string;
   status: string;
   statusSha256: string;
@@ -144,36 +145,52 @@ async function hashPath(hash: Hash, repository: string, path: string): Promise<v
     return;
   }
   updateField(hash, "metadata", metadata(before));
-  if (before.isDirectory() && (await isGitlink(repository, path))) {
-    await hashSubmodule(hash, absolute);
-  } else {
-    await hashPathContents(hash, absolute, before);
-  }
+  const nestedKind = before.isDirectory()
+    ? await nestedRepositoryKind(repository, path, absolute)
+    : undefined;
+  if (nestedKind === undefined) await hashPathContents(hash, absolute, before);
+  else await hashNestedRepository(hash, absolute, nestedKind);
   const after = await readStats(absolute);
   if (after === undefined || metadata(before) !== metadata(after)) {
     throw new Error(`repository path changed while Regrafter captured evidence: ${path}`);
   }
 }
 
-async function isGitlink(repository: string, path: string): Promise<boolean> {
+async function nestedRepositoryKind(
+  repository: string,
+  path: string,
+  absolute: string
+): Promise<NestedRepositoryKind | undefined> {
   const output = await readGitOutput(repository, ["ls-files", "--stage", "-z", "--", path]);
-  return output.split("\0").some((entry) => entry.startsWith("160000 "));
+  if (output.split("\0").some((entry) => entry.startsWith("160000 "))) return "submodule";
+  if ((await readStats(resolve(absolute, ".git"))) === undefined) return undefined;
+  const topLevel = resolve(
+    (await readGitOutput(absolute, ["rev-parse", "--show-toplevel"])).trim()
+  );
+  if (topLevel !== absolute) {
+    throw new Error(`embedded Git repository has an unexpected worktree root: ${path}`);
+  }
+  return "embedded_repository";
 }
 
-async function hashSubmodule(hash: Hash, repository: string): Promise<void> {
-  updateField(hash, "kind", "submodule");
-  const before = await readSubmoduleState(repository);
-  updateField(hash, "submodule_head", before.head);
-  updateField(hash, "submodule_status_sha256", before.statusSha256);
-  updateField(hash, "submodule_index_sha256", before.indexSha256);
+async function hashNestedRepository(
+  hash: Hash,
+  repository: string,
+  kind: NestedRepositoryKind
+): Promise<void> {
+  updateField(hash, "kind", kind);
+  const before = await readNestedRepositoryState(repository);
+  updateField(hash, "nested_head", before.head);
+  updateField(hash, "nested_status_sha256", before.statusSha256);
+  updateField(hash, "nested_index_sha256", before.indexSha256);
   await updatePaths(hash, repository, parseDirtyPaths(before.status));
-  const after = await readSubmoduleState(repository);
-  if (!sameSubmoduleState(before, after)) {
-    throw new Error("submodule changed while Regrafter captured handoff evidence");
+  const after = await readNestedRepositoryState(repository);
+  if (!sameNestedRepositoryState(before, after)) {
+    throw new Error("nested Git repository changed while Regrafter captured handoff evidence");
   }
 }
 
-async function readSubmoduleState(repository: string): Promise<SubmoduleState> {
+async function readNestedRepositoryState(repository: string): Promise<NestedRepositoryState> {
   const [head, status, indexSha256] = await Promise.all([
     readGitOutput(repository, ["rev-parse", "HEAD"]),
     readGitOutput(repository, [
@@ -193,7 +210,10 @@ async function readSubmoduleState(repository: string): Promise<SubmoduleState> {
   };
 }
 
-function sameSubmoduleState(left: SubmoduleState, right: SubmoduleState): boolean {
+function sameNestedRepositoryState(
+  left: NestedRepositoryState,
+  right: NestedRepositoryState
+): boolean {
   return (
     left.head === right.head &&
     left.status === right.status &&
