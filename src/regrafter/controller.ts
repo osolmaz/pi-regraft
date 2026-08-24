@@ -32,6 +32,7 @@ import type {
   ControllerResult,
   HandoffCandidate,
   LeaseRecord,
+  RepositoryEvidence,
   RepositorySnapshot,
   RunAuthority,
   RunRecord
@@ -270,7 +271,7 @@ export async function prepareHandoff(
     const run = await inspectRun(id, options);
     assertHandoffSource(run);
     const lease = await ownedLease(run, stateDir);
-    const current = await captureRepositoryEvidence(run.repository);
+    const current = await captureHandoffEvidence(run);
     return createHandoffCandidate(run, lease, current);
   });
 }
@@ -294,7 +295,7 @@ export async function acceptHandoff(
     run = await inspectRun(id, options);
     assertHandoffSource(run);
     const lease = await ownedLease(run, stateDir);
-    const current = await captureRepositoryEvidence(run.repository);
+    const current = await captureHandoffEvidence(run);
     const candidate = createHandoffCandidate(run, lease, current);
     if (candidate.evidence !== evidence) {
       throw new Error("repository or lease changed after handoff preparation");
@@ -353,6 +354,26 @@ async function ownedLease(run: RunRecord, stateDir: string): Promise<LeaseRecord
     throw new Error(`run ${run.run_id} does not own its repository lease`);
   }
   return lease;
+}
+
+async function captureHandoffEvidence(run: RunRecord): Promise<RepositoryEvidence> {
+  assertRepositoryIdentity(run, await identifyRepository(run.repository));
+  const current = await captureRepositoryEvidence(run.repository);
+  const verified = await identifyRepository(run.repository);
+  assertRepositoryIdentity(run, verified);
+  if (!sameSnapshot(current.snapshot, verified.snapshot)) {
+    throw new Error("repository changed while Regrafter verified handoff identity");
+  }
+  return current;
+}
+
+function assertRepositoryIdentity(
+  run: RunRecord,
+  identified: Awaited<ReturnType<typeof identifyRepository>>
+): void {
+  if (identified.repository !== run.repository || identified.gitCommonDir !== run.git_common_dir) {
+    throw new Error("repository identity changed after the Regrafter run started; lease retained");
+  }
 }
 
 function assertAuditText(actor: string, reason: string): void {

@@ -57,13 +57,13 @@ async function updatedGraftProblems(run: RunRecord, report: AgentReport): Promis
   const commitScope = report.commits
     .filter((commit) => !updatedNames.has(commit.graft))
     .map((commit) => `commit ${commit.sha} names graft "${commit.graft}" outside updated_grafts`);
-  if (report.updated_grafts.length === 0) return [...duplicates, ...commitScope];
 
   const baseline = run.graft_baseline;
   if (baseline === undefined || baseline.starting_head !== run.starting.head) {
     return [...duplicates, ...commitScope, "run has no valid starting graft baseline"];
   }
   const manifest = await readManifest(join(run.repository, MANIFEST_FILE));
+  const manifestScope = manifestScopeProblems(manifest, baseline.grafts, updatedNames);
   const perGraft = await Promise.all(
     report.updated_grafts.map(async (updated) => {
       const starting = baseline.grafts.find((entry) => entry.graft === updated.graft);
@@ -73,7 +73,29 @@ async function updatedGraftProblems(run: RunRecord, report: AgentReport): Promis
       return await oneGraftProblems(run, report, manifest, starting, updated);
     })
   );
-  return [...duplicates, ...commitScope, ...perGraft.flat()];
+  return [...duplicates, ...commitScope, ...manifestScope, ...perGraft.flat()];
+}
+
+function manifestScopeProblems(
+  manifest: Manifest,
+  baseline: readonly GraftBaselineEntry[],
+  updatedNames: ReadonlySet<string>
+): string[] {
+  const baselineNames = new Set(baseline.map((entry) => entry.graft));
+  const changedWithoutReport = baseline.flatMap((starting) => {
+    const finalGraft = findGraft(manifest, starting.graft);
+    const changed =
+      finalGraft === undefined ||
+      finalGraft.commit !== starting.upstream ||
+      finalGraft.dest !== starting.dest;
+    return changed && !updatedNames.has(starting.graft)
+      ? [`final manifest changes graft "${starting.graft}" outside updated_grafts`]
+      : [];
+  });
+  const added = manifest.grafts
+    .filter((graft) => !baselineNames.has(graft.name))
+    .map((graft) => `final manifest adds graft "${graft.name}" outside the starting baseline`);
+  return [...changedWithoutReport, ...added];
 }
 
 async function oneGraftProblems(

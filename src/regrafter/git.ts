@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 import spawn from "cross-spawn";
 import type { RepositorySnapshot } from "./types.js";
 
-async function git(cwd: string, args: readonly string[]): Promise<string> {
+async function git(
+  cwd: string,
+  args: readonly string[],
+  allowedExitCodes: readonly number[] = [0]
+): Promise<string> {
   const child = spawn("git", args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
@@ -16,7 +20,7 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
       else accept(exitCode ?? 1);
     });
   });
-  if (code !== 0) {
+  if (!allowedExitCodes.includes(code)) {
     throw new Error(
       Buffer.concat(stderr).toString("utf8").trim() || `git exited with ${code.toString()}`
     );
@@ -40,15 +44,20 @@ export async function identifyRepository(input: string): Promise<{
 
 export async function snapshotRepository(repository: string): Promise<RepositorySnapshot> {
   const [branch, head, status] = await Promise.all([
-    git(repository, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    currentBranch(repository),
     git(repository, ["rev-parse", "HEAD"]),
     git(repository, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
   ]);
   return {
-    branch: branch.trim(),
+    branch,
     head: head.trim(),
     dirty_paths: parseDirtyPaths(status)
   };
+}
+
+async function currentBranch(repository: string): Promise<string> {
+  const branch = await git(repository, ["symbolic-ref", "--quiet", "--short", "HEAD"], [0, 1]);
+  return branch.trim() || "(detached)";
 }
 
 export function parseDirtyPaths(status: string): string[] {

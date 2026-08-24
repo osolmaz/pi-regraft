@@ -26,6 +26,18 @@ it("captures complete status output after Git exits", async () => {
   expect((await identifyRepository(root)).snapshot.dirty_paths).toHaveLength(names.length);
 });
 
+it("records detached HEAD without rejecting the repository", async () => {
+  const root = await mkdtemp(join(tmpdir(), "regrafter-detached-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  await writeFile(join(root, "tracked.txt"), "tracked\n");
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+  execFileSync("git", ["checkout", "--detach"], { cwd: root });
+  expect((await identifyRepository(root)).snapshot.branch).toBe("(detached)");
+});
+
 it("canonicalizes repository aliases and records dirty paths", async () => {
   const root = await mkdtemp(join(tmpdir(), "regrafter-git-"));
   const repo = join(root, "repo");
