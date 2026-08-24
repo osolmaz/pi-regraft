@@ -150,6 +150,8 @@ regrafter inspect <run-id> --json
 regrafter list --repo /path/to/repository --json
 regrafter attach <run-id>
 regrafter abort <run-id> --json
+regrafter handoff prepare <run-id> --json
+regrafter handoff accept <run-id> --evidence <sha256> --actor <id> --reason-file <path> --json
 ```
 
 The baseline command grants no authority to create overlay commits, push, or
@@ -159,7 +161,16 @@ cannot remove authority already granted.
 
 Regrafter never drops a lease because it is old and never silently chooses
 between competing local and upstream behavior. `abort` does not reset files; it
-releases the lease only after verifying the repository handoff state.
+releases the lease only when the repository still matches the last verified run
+state.
+
+Use `handoff prepare` after the repository was reconciled outside Regrafter. It
+returns a digest bound to the run, lease, branch, HEAD, index, dirty paths, and
+changed file contents. Review that evidence before using `handoff accept` with
+an actor label and a reason file. Acceptance records the reviewed state before
+it releases the lease. It transfers responsibility for that state and does not
+validate, commit, reset, or endorse the repository work. A pending accepted
+handoff can be retried safely after an interrupted lease release.
 
 ### Local model server
 

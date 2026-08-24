@@ -88,6 +88,56 @@ export const agentReportSchema = Type.Object(
   },
   { additionalProperties: false }
 );
+const Sha256 = Type.String({ pattern: "^[0-9a-f]{64}$" });
+const GraftBaseline = Type.Object(
+  {
+    starting_head: Type.String(),
+    grafts: Type.Array(
+      Type.Object(
+        {
+          graft: Type.String(),
+          dest: Type.String(),
+          upstream: Type.String(),
+          local_base: Type.String(),
+          local_overlay: Type.Boolean()
+        },
+        { additionalProperties: false }
+      )
+    )
+  },
+  { additionalProperties: false }
+);
+const RejectedCompletion = Type.Object(
+  {
+    report: agentReportSchema,
+    reasons: Type.Array(Type.String(), { minItems: 1 }),
+    observed: repositorySnapshotSchema
+  },
+  { additionalProperties: false }
+);
+const RepositoryEvidence = Type.Object(
+  {
+    snapshot: repositorySnapshotSchema,
+    status_sha256: Sha256,
+    index_sha256: Sha256,
+    content_sha256: Sha256
+  },
+  { additionalProperties: false }
+);
+const HandoffAudit = Type.Object(
+  {
+    schema_version: Type.Literal(1),
+    evidence: Sha256,
+    actor: Type.String({ minLength: 1 }),
+    reason: Type.String({ minLength: 1 }),
+    accepted_at: Type.String(),
+    previous: repositorySnapshotSchema,
+    accepted: RepositoryEvidence,
+    release: Type.Union([Type.Literal("pending"), Type.Literal("released")]),
+    released_at: Type.Optional(Type.String())
+  },
+  { additionalProperties: false }
+);
 const runStateSchema = Type.Union([
   Type.Literal("ready"),
   Type.Literal("working"),
@@ -96,7 +146,8 @@ const runStateSchema = Type.Union([
   Type.Literal("completed"),
   Type.Literal("failed"),
   Type.Literal("aborted"),
-  Type.Literal("interrupted")
+  Type.Literal("interrupted"),
+  Type.Literal("handed_off")
 ]);
 export const runRecordSchema = Type.Object(
   {
@@ -114,7 +165,10 @@ export const runRecordSchema = Type.Object(
       { overlay_commits: Type.Boolean(), push: Type.Boolean(), pull_requests: Type.Boolean() },
       { additionalProperties: false }
     ),
+    graft_baseline: Type.Optional(GraftBaseline),
     report: Type.Optional(agentReportSchema),
+    rejected_completion: Type.Optional(RejectedCompletion),
+    handoff: Type.Optional(HandoffAudit),
     process: Type.Optional(
       Type.Object(
         { pid: Type.Integer(), started_at: Type.String() },

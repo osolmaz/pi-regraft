@@ -16,5 +16,6 @@ it("prints help", async () => {
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   expect(await runCli(["--help"])).toBe(0);
   expect(String(output.mock.calls[0]?.[0])).toContain("regrafter start");
+  expect(String(output.mock.calls[0]?.[0])).toContain("regrafter handoff prepare");
   output.mockRestore();
 });

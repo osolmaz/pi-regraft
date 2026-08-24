@@ -6,7 +6,16 @@ import {
   setConfigModel,
   setConfigThinking
 } from "./config.js";
-import { abortRun, attachRun, findRuns, inspectRun, sendRun, startRun } from "./controller.js";
+import {
+  abortRun,
+  acceptHandoff,
+  attachRun,
+  findRuns,
+  inspectRun,
+  prepareHandoff,
+  sendRun,
+  startRun
+} from "./controller.js";
 import type { RunAuthority } from "./types.js";
 
 export async function runCli(argv: readonly string[]): Promise<number> {
@@ -34,6 +43,7 @@ const commands: Readonly<Record<string, (args: readonly string[]) => Promise<unk
   list: listCommand,
   attach: attachCommand,
   abort: abortCommand,
+  handoff: handoffCommand,
   config: configCommand
 };
 
@@ -85,6 +95,27 @@ async function abortCommand(args: readonly string[]): Promise<unknown> {
   const parsed = parseOptions(args, new Set());
   if (parsed.positionals.length !== 1) throw new Error("abort requires one run id");
   return await abortRun(parsed.positionals[0] ?? "");
+}
+const handoffUsage =
+  "handoff requires prepare <run-id>, or accept <run-id> --evidence <sha256> --actor <id> --reason-file <path>";
+async function handoffCommand(args: readonly string[]): Promise<unknown> {
+  const parsed = parseOptions(args, new Set(["--evidence", "--actor", "--reason-file"]));
+  const [action, id, ...rest] = parsed.positionals;
+  if (rest.length > 0 || id === undefined) throw new Error(handoffUsage);
+  if (action === "prepare") {
+    if (parsed.options.size > 0) throw new Error(handoffUsage);
+    return await prepareHandoff(id);
+  }
+  if (action === "accept") {
+    const reason = (await readTextFile(required(parsed, "--reason-file"), "reason")).trim();
+    return await acceptHandoff(
+      id,
+      required(parsed, "--evidence"),
+      required(parsed, "--actor"),
+      reason
+    );
+  }
+  throw new Error(handoffUsage);
 }
 const configUsage =
   "config requires show, reset, set model <provider/model>, or set thinking <level>";
@@ -162,10 +193,10 @@ function print(value: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(value, null, json ? undefined : 2)}\n`);
 }
 function usageError(message: string): boolean {
-  return /^(missing|unknown|duplicate|unexpected|start |send |inspect |attach |abort |config |--)/u.test(
+  return /^(missing|unknown|duplicate|unexpected|start |send |inspect |attach |abort |handoff |config |--)/u.test(
     message
   );
 }
 function usage(): string {
-  return `Usage:\n  regrafter start --repo <path> --request-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter send <run-id> [--decision <id>] --message-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter inspect <run-id> [--json]\n  regrafter list [--repo <path>] [--json]\n  regrafter attach <run-id>\n  regrafter abort <run-id> [--json]\n  regrafter config show [--json]\n  regrafter config set model <provider/model> [--json]\n  regrafter config set thinking <level> [--json]\n  regrafter config reset [--json]\n`;
+  return `Usage:\n  regrafter start --repo <path> --request-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter send <run-id> [--decision <id>] --message-file <file> [--allow commits,push,pull-requests] [--json]\n  regrafter inspect <run-id> [--json]\n  regrafter list [--repo <path>] [--json]\n  regrafter attach <run-id>\n  regrafter abort <run-id> [--json]\n  regrafter handoff prepare <run-id> [--json]\n  regrafter handoff accept <run-id> --evidence <sha256> --actor <id> --reason-file <path> [--json]\n  regrafter config show [--json]\n  regrafter config set model <provider/model> [--json]\n  regrafter config set thinking <level> [--json]\n  regrafter config reset [--json]\n`;
 }

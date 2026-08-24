@@ -14,8 +14,15 @@ import {
   type PiLaunchPlan
 } from "@osolmaz/pi-factory";
 import { resolveAppProfile } from "./ambient.js";
+import { completionProblems } from "./completion.js";
 import { defaultConfigPath, loadConfig } from "./config.js";
+import { captureGraftBaseline } from "./graft-baseline.js";
 import { identifyRepository, sameSnapshot, snapshotRepository } from "./git.js";
+import {
+  assertEvidenceDigest,
+  captureRepositoryEvidence,
+  createHandoffCandidate
+} from "./handoff-evidence.js";
 import { acquireLease, readLease, releaseLease, updateLease } from "./lease.js";
 import { controllerResult, readAgentReport } from "./reports.js";
 import { withRunLock } from "./run-lock.js";
@@ -23,6 +30,7 @@ import { listRuns, loadRun, reportPath, saveRun, stateDirectory } from "./runs.j
 import type {
   AgentReport,
   ControllerResult,
+  HandoffCandidate,
   LeaseRecord,
   RepositorySnapshot,
   RunAuthority,
@@ -63,6 +71,7 @@ export async function startRun(
   if (request.trim() === "") throw new Error("request must not be empty");
   const stateDir = options.stateDir ?? stateDirectory();
   const identified = await identifyRepository(repositoryInput);
+  const graftBaseline = await captureGraftBaseline(identified.repository, identified.snapshot.head);
   const id = runId();
   const timestamp = now();
   const run: RunRecord = {
@@ -75,7 +84,8 @@ export async function startRun(
     updated_at: timestamp,
     starting: identified.snapshot,
     last_observed: identified.snapshot,
-    authority: options.authority ?? noAuthority()
+    authority: options.authority ?? noAuthority(),
+    graft_baseline: graftBaseline
   };
   const lease = leaseFor(run);
   await acquireLease(stateDir, lease);
@@ -188,7 +198,7 @@ async function attachRunLocked(
 }
 
 function attachSession(run: RunRecord, id: string): string {
-  if (new Set(["working", "completed", "aborted"]).has(run.state)) {
+  if (new Set(["working", "completed", "aborted", "handed_off"]).has(run.state)) {
     throw new Error(`run ${id} cannot attach from ${run.state}`);
   }
   if (run.session_id === undefined) throw new Error(`run ${id} has no Pi session`);
@@ -202,20 +212,20 @@ async function finishAttachment(
   observed: RepositorySnapshot,
   stateDir: string
 ): Promise<RunRecord> {
-  const selectedReport = report ?? original.report;
-  await rejectDirtyCompletion(report?.state, observed, working, stateDir);
+  if (report !== undefined) {
+    const sessionId = working.session_id;
+    if (sessionId === undefined) throw new Error(`run ${working.run_id} has no Pi session`);
+    return await finishReportedRun(working, report, observed, sessionId, stateDir);
+  }
   const finished: RunRecord = {
     ...withoutProcess(working),
-    state: report?.state ?? original.state,
-    ...(selectedReport === undefined ? {} : { report: selectedReport }),
+    state: original.state,
+    ...(original.report === undefined ? {} : { report: original.report }),
     updated_at: now(),
     last_observed: observed
   };
   await saveRun(stateDir, finished);
   await updateLease(stateDir, leaseFor(finished));
-  if (finished.state === "completed") {
-    await releaseLease(stateDir, finished.git_common_dir, finished.run_id);
-  }
   return finished;
 }
 
@@ -246,6 +256,126 @@ async function abortRunLocked(
   await saveRun(stateDir, aborted);
   await releaseLease(stateDir, run.git_common_dir, id);
   return aborted;
+}
+
+export async function prepareHandoff(
+  id: string,
+  options: ControllerOptions = {}
+): Promise<HandoffCandidate> {
+  const stateDir = options.stateDir ?? stateDirectory();
+  return await withRunLock(stateDir, id, async () => {
+    const run = await inspectRun(id, options);
+    assertHandoffSource(run);
+    const lease = await ownedLease(run, stateDir);
+    const current = await captureRepositoryEvidence(run.repository);
+    return createHandoffCandidate(run, lease, current);
+  });
+}
+
+export async function acceptHandoff(
+  id: string,
+  evidence: string,
+  actor: string,
+  reason: string,
+  options: ControllerOptions = {}
+): Promise<RunRecord> {
+  assertEvidenceDigest(evidence);
+  assertAuditText(actor, reason);
+  const stateDir = options.stateDir ?? stateDirectory();
+  return await withRunLock(stateDir, id, async () => {
+    let run = await loadRun(stateDir, id);
+    if (run.state === "handed_off") {
+      assertMatchingHandoff(run, evidence, actor, reason);
+      return await finishHandoffRelease(run, stateDir);
+    }
+    run = await inspectRun(id, options);
+    assertHandoffSource(run);
+    const lease = await ownedLease(run, stateDir);
+    const current = await captureRepositoryEvidence(run.repository);
+    const candidate = createHandoffCandidate(run, lease, current);
+    if (candidate.evidence !== evidence) {
+      throw new Error("repository or lease changed after handoff preparation");
+    }
+    const acceptedAt = now();
+    const idle = withoutProcess(run);
+    delete idle.rejected_completion;
+    const accepted: RunRecord = {
+      ...idle,
+      state: "handed_off",
+      updated_at: acceptedAt,
+      last_observed: current.snapshot,
+      handoff: {
+        schema_version: 1,
+        evidence,
+        actor,
+        reason,
+        accepted_at: acceptedAt,
+        previous: run.last_observed,
+        accepted: current,
+        release: "pending"
+      }
+    };
+    await saveRun(stateDir, accepted);
+    return await finishHandoffRelease(accepted, stateDir);
+  });
+}
+
+async function finishHandoffRelease(run: RunRecord, stateDir: string): Promise<RunRecord> {
+  const handoff = run.handoff;
+  if (handoff === undefined) throw new Error(`run ${run.run_id} has no handoff audit`);
+  if (handoff.release === "released") return run;
+  const lease = await readLease(stateDir, run.git_common_dir);
+  if (lease?.run_id === run.run_id) {
+    await releaseLease(stateDir, run.git_common_dir, run.run_id);
+  }
+  const finished: RunRecord = {
+    ...run,
+    updated_at: now(),
+    handoff: { ...handoff, release: "released", released_at: now() }
+  };
+  await saveRun(stateDir, finished);
+  return finished;
+}
+
+function assertHandoffSource(run: RunRecord): void {
+  if (run.state === "working") throw new Error(`run ${run.run_id} is working and cannot hand off`);
+  if (!new Set(["needs_decision", "blocked", "failed", "interrupted"]).has(run.state)) {
+    throw new Error(`run ${run.run_id} cannot hand off from ${run.state}`);
+  }
+}
+
+async function ownedLease(run: RunRecord, stateDir: string): Promise<LeaseRecord> {
+  const lease = await readLease(stateDir, run.git_common_dir);
+  if (lease?.run_id !== run.run_id) {
+    throw new Error(`run ${run.run_id} does not own its repository lease`);
+  }
+  return lease;
+}
+
+function assertAuditText(actor: string, reason: string): void {
+  if (actor.trim() === "" || Buffer.byteLength(actor, "utf8") > 128) {
+    throw new Error("handoff actor must contain 1 to 128 UTF-8 bytes");
+  }
+  if (reason.trim() === "" || Buffer.byteLength(reason, "utf8") > 2048) {
+    throw new Error("handoff reason must contain 1 to 2048 UTF-8 bytes");
+  }
+}
+
+function assertMatchingHandoff(
+  run: RunRecord,
+  evidence: string,
+  actor: string,
+  reason: string
+): void {
+  const handoff = run.handoff;
+  if (
+    handoff === undefined ||
+    handoff.evidence !== evidence ||
+    handoff.actor !== actor ||
+    handoff.reason !== reason
+  ) {
+    throw new Error(`run ${run.run_id} has a different accepted handoff`);
+  }
 }
 
 async function invoke(
@@ -289,20 +419,7 @@ async function invoke(
   });
   const sessionId = await verifiedSessionId(working, launch, stateDir);
   const observed = await snapshotRepository(working.repository);
-  await rejectDirtyCompletion(report.state, observed, working, stateDir);
-  const idleFinished = withoutProcess(working);
-  const finished: RunRecord = {
-    ...idleFinished,
-    state: report.state,
-    session_id: sessionId,
-    report,
-    updated_at: now(),
-    last_observed: observed
-  };
-  await saveRun(stateDir, finished);
-  await updateLease(stateDir, leaseFor(finished));
-  if (report.state === "completed")
-    await releaseLease(stateDir, finished.git_common_dir, finished.run_id);
+  const finished = await finishReportedRun(working, report, observed, sessionId, stateDir);
   return controllerResult(finished);
 }
 
@@ -535,7 +652,7 @@ async function assertResumable(
   decisionId: string | undefined,
   stateDir: string
 ): Promise<void> {
-  if (["completed", "aborted", "failed", "working"].includes(run.state))
+  if (["completed", "aborted", "failed", "working", "handed_off"].includes(run.state))
     throw new Error(`run ${run.run_id} cannot resume from ${run.state}`);
   const expected = run.report?.decision?.id;
   if (expected !== undefined && decisionId !== expected)
@@ -616,15 +733,55 @@ async function interrupt(run: RunRecord, stateDir: string, reason: string): Prom
   await updateLease(stateDir, leaseFor(value));
   throw new Error(reason);
 }
-async function rejectDirtyCompletion(
-  state: AgentReport["state"] | undefined,
+async function finishReportedRun(
+  working: RunRecord,
+  report: AgentReport,
   observed: RepositorySnapshot,
-  run: RunRecord,
+  sessionId: string,
   stateDir: string
-): Promise<void> {
-  if (state === "completed" && observed.dirty_paths.length > 0) {
-    await failWithoutReport(run, stateDir, "agent reported completion with a dirty worktree");
+): Promise<RunRecord> {
+  const problems = await completionProblems(working, report, observed);
+  const selectedReport =
+    problems.length === 0 ? report : blockedCompletionReport(report, problems, working.authority);
+  const finished: RunRecord = {
+    ...withoutProcess(working),
+    state: selectedReport.state,
+    session_id: sessionId,
+    report: selectedReport,
+    ...(problems.length === 0
+      ? {}
+      : { rejected_completion: { report, reasons: problems, observed } }),
+    updated_at: now(),
+    last_observed: observed
+  };
+  await saveRun(stateDir, finished);
+  await updateLease(stateDir, leaseFor(finished));
+  if (finished.state === "completed") {
+    await releaseLease(stateDir, finished.git_common_dir, finished.run_id);
   }
+  return finished;
+}
+
+function blockedCompletionReport(
+  report: AgentReport,
+  problems: readonly string[],
+  authority: RunAuthority
+): AgentReport {
+  const needed = authority.overlay_commits
+    ? "Resume the same run and correct the reported completion while preserving every base commit."
+    : "Grant overlay-commit authority, then resume the same run and commit the restored overlay.";
+  return {
+    ...report,
+    state: "blocked",
+    summary: `Controller rejected completion: ${problems[0] ?? "completion contract failed"}`,
+    blocker: {
+      reason: "proposed completion failed the controller contract",
+      evidence: [...problems],
+      attempted_actions: [],
+      needed
+    },
+    next: needed
+  };
 }
 
 async function verifiedSessionId(
@@ -687,6 +844,7 @@ function withoutProcess(run: RunRecord): RunRecord {
 function withoutReportAndInterruption(run: RunRecord): RunRecord {
   const copy: RunRecord = { ...run };
   delete copy.report;
+  delete copy.rejected_completion;
   delete copy.interruption;
   return copy;
 }

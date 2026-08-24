@@ -1,6 +1,6 @@
 {
   "name": "pi-regraft",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Vendor and update upstream code as plain files, with a dedicated Pi agent for resumable conflict resolution.",
   "type": "module",
   "license": "MIT",
