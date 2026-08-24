@@ -446,6 +446,20 @@ it("keeps invalid dirty completion resumable and leased", async () => {
   expect(await readLease(value.stateDir, run.git_common_dir)).toBeUndefined();
 });
 
+it("aborts a rejected completion from its exact verified snapshot", async () => {
+  const value = await fixture();
+  const dirtyCompletion: AgentLauncher = async (plan, logPath) => {
+    await writeFile(join(value.repo, "uncommitted.txt"), "not done\n");
+    return await launcherFor(report())(plan, logPath);
+  };
+  const blocked = await startRun(value.repo, "Update.", options(value, dirtyCompletion));
+  const aborted = await abortRun(blocked.run_id, value);
+  expect(aborted.state).toBe("aborted");
+  expect(aborted.rejected_completion).toBeUndefined();
+  expect(await readLease(value.stateDir, aborted.git_common_dir)).toBeUndefined();
+  expect(await readFile(join(value.repo, "uncommitted.txt"), "utf8")).toBe("not done\n");
+});
+
 it("clears rejected completion state before an attached retry", async () => {
   const value = await fixture();
   const dirtyCompletion: AgentLauncher = async (plan, logPath) => {
