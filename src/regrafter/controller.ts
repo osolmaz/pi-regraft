@@ -221,6 +221,9 @@ async function finishAttachment(
     ...withoutProcess(working),
     state: original.state,
     ...(original.report === undefined ? {} : { report: original.report }),
+    ...(original.rejected_completion === undefined
+      ? {}
+      : { rejected_completion: original.rejected_completion }),
     updated_at: now(),
     last_observed: observed
   };
