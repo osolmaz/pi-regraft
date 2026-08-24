@@ -9,7 +9,9 @@ const controller = vi.hoisted(() => ({
   inspectRun: vi.fn(),
   findRuns: vi.fn(),
   attachRun: vi.fn(),
-  abortRun: vi.fn()
+  abortRun: vi.fn(),
+  prepareHandoff: vi.fn(),
+  acceptHandoff: vi.fn()
 }));
 vi.mock("../../src/regrafter/controller.js", () => controller);
 const { runCli } = await import("../../src/regrafter/cli.js");
@@ -24,7 +26,9 @@ beforeEach(() => {
 it("dispatches every controller command", async () => {
   const root = await mkdtemp(join(tmpdir(), "regrafter-cli-"));
   const request = join(root, "request.txt");
+  const reason = join(root, "reason.txt");
   await writeFile(request, "Update.\n");
+  await writeFile(reason, "Externally reconciled.\n");
   expect(
     await runCli([
       "start",
@@ -53,12 +57,34 @@ it("dispatches every controller command", async () => {
   expect(await runCli(["list", "--repo", "/repo"])).toBe(0);
   expect(await runCli(["attach", "run-1"])).toBe(0);
   expect(await runCli(["abort", "run-1"])).toBe(0);
+  expect(await runCli(["handoff", "prepare", "run-1", "--json"])).toBe(0);
+  expect(
+    await runCli([
+      "handoff",
+      "accept",
+      "run-1",
+      "--evidence",
+      "a".repeat(64),
+      "--actor",
+      "operator",
+      "--reason-file",
+      reason,
+      "--json"
+    ])
+  ).toBe(0);
   expect(controller.startRun).toHaveBeenCalledWith("/repo", "Update.\n", {
     authority: { overlay_commits: true, push: true, pull_requests: false }
   });
   expect(controller.sendRun).toHaveBeenCalledWith("run-1", "Update.\n", "decision-1", {
     grant: { overlay_commits: false, push: false, pull_requests: true }
   });
+  expect(controller.prepareHandoff).toHaveBeenCalledWith("run-1");
+  expect(controller.acceptHandoff).toHaveBeenCalledWith(
+    "run-1",
+    "a".repeat(64),
+    "operator",
+    "Externally reconciled."
+  );
 });
 
 it("rejects missing, duplicate, and unexpected arguments", async () => {
@@ -75,6 +101,9 @@ it("rejects missing, duplicate, and unexpected arguments", async () => {
   expect(await runCli(["inspect", "one", "two"])).toBe(2);
   expect(await runCli(["attach"])).toBe(2);
   expect(await runCli(["abort", "one", "two"])).toBe(2);
+  expect(await runCli(["handoff"])).toBe(2);
+  expect(await runCli(["handoff", "prepare", "run-1", "--actor", "operator"])).toBe(2);
+  expect(await runCli(["handoff", "accept", "run-1", "--evidence", "abc"])).toBe(2);
 });
 
 it("normalizes non-Error controller failures", async () => {

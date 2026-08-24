@@ -27,13 +27,44 @@ export function reportPath(stateDir: string, runId: string): string {
 export async function saveRun(stateDir: string, run: RunRecord): Promise<void> {
   const id = run.run_id;
   if (!Value.Check(runRecordSchema, run)) throw new Error(`refusing to save invalid run ${id}`);
+  validateRunRecord(run, `refusing to save invalid run ${id}`);
   await writeJsonAtomic(runPath(stateDir, run.run_id), run);
 }
 
 export async function loadRun(stateDir: string, runId: string): Promise<RunRecord> {
   const value = await readJson(runPath(stateDir, runId));
   if (!Value.Check(runRecordSchema, value)) throw new Error(`run record is invalid: ${runId}`);
+  validateRunRecord(value, `run record is invalid: ${runId}`);
   return value;
+}
+
+function validateRunRecord(run: RunRecord, prefix: string): void {
+  validateStateFields(run, prefix);
+  if (run.handoff !== undefined) validateHandoff(run.handoff, prefix);
+}
+
+function validateStateFields(run: RunRecord, prefix: string): void {
+  if ((run.state === "handed_off") !== (run.handoff !== undefined)) {
+    throw new Error(`${prefix}; handed_off state and audit must appear together`);
+  }
+  if (run.rejected_completion !== undefined && run.state !== "blocked") {
+    throw new Error(`${prefix}; rejected completion is only valid for blocked state`);
+  }
+}
+
+function validateHandoff(handoff: NonNullable<RunRecord["handoff"]>, prefix: string): void {
+  if (Buffer.byteLength(handoff.actor, "utf8") > 128) {
+    throw new Error(`${prefix}; handoff actor exceeds 128 UTF-8 bytes`);
+  }
+  if (Buffer.byteLength(handoff.reason, "utf8") > 2048) {
+    throw new Error(`${prefix}; handoff reason exceeds 2048 UTF-8 bytes`);
+  }
+  if (handoff.release === "released" && handoff.released_at === undefined) {
+    throw new Error(`${prefix}; released handoff requires released_at`);
+  }
+  if (handoff.release === "pending" && handoff.released_at !== undefined) {
+    throw new Error(`${prefix}; pending handoff cannot include released_at`);
+  }
 }
 
 export async function listRuns(stateDir: string, repository?: string): Promise<RunRecord[]> {

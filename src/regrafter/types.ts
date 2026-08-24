@@ -8,7 +8,8 @@ export type RunState =
   | "completed"
   | "failed"
   | "aborted"
-  | "interrupted";
+  | "interrupted"
+  | "handed_off";
 
 export type CommitEntry = { kind: "base" | "overlay"; graft: string; sha: string };
 export type CheckEntry = {
@@ -62,6 +63,50 @@ export type RepositorySnapshot = {
   head: string;
   dirty_paths: string[];
 };
+export type GraftBaselineEntry = {
+  graft: string;
+  dest: string;
+  upstream: string;
+  local_base: string;
+  local_overlay: boolean;
+};
+export type GraftBaseline = {
+  starting_head: string;
+  grafts: GraftBaselineEntry[];
+};
+export type RejectedCompletion = {
+  report: AgentReport;
+  reasons: string[];
+  observed: RepositorySnapshot;
+};
+export type RepositoryEvidence = {
+  snapshot: RepositorySnapshot;
+  status_sha256: string;
+  index_sha256: string;
+  content_sha256: string;
+};
+export type HandoffCandidate = {
+  schema_version: 1;
+  run_id: string;
+  repository: string;
+  git_common_dir: string;
+  run_updated_at: string;
+  lease: LeaseRecord;
+  previous: RepositorySnapshot;
+  current: RepositoryEvidence;
+  evidence: string;
+};
+export type HandoffAudit = {
+  schema_version: 1;
+  evidence: string;
+  actor: string;
+  reason: string;
+  accepted_at: string;
+  previous: RepositorySnapshot;
+  accepted: RepositoryEvidence;
+  release: "pending" | "released";
+  released_at?: string;
+};
 export type RunRecord = {
   schema_version: 1;
   run_id: string;
@@ -74,7 +119,10 @@ export type RunRecord = {
   starting: RepositorySnapshot;
   last_observed: RepositorySnapshot;
   authority: RunAuthority;
+  graft_baseline?: GraftBaseline;
   report?: AgentReport;
+  rejected_completion?: RejectedCompletion;
+  handoff?: HandoffAudit;
   process?: { pid: number; started_at: string };
   interruption?: { reason: string; at: string };
 };

@@ -414,16 +414,36 @@ it("records launch and report failures without releasing the lease", async () =>
   );
 });
 
-it("rejects completion while repository changes remain uncommitted", async () => {
+it("keeps invalid dirty completion resumable and leased", async () => {
   const value = await fixture();
   const dirtyCompletion: AgentLauncher = async (plan, logPath) => {
     await writeFile(join(value.repo, "uncommitted.txt"), "not done\n");
     return await launcherFor(report())(plan, logPath);
   };
-  await expect(startRun(value.repo, "Update.", options(value, dirtyCompletion))).rejects.toThrow(
-    "dirty worktree"
-  );
-  expect((await findRuns(value.repo, value))[0]?.state).toBe("failed");
+  const result = await startRun(value.repo, "Update.", options(value, dirtyCompletion));
+  expect(result.state).toBe("blocked");
+  expect(result.blocker?.reason).toContain("completion failed");
+  const [run] = await findRuns(value.repo, value);
+  expect(run).toBeDefined();
+  if (run === undefined) throw new Error("missing blocked run");
+  expect(run.state).toBe("blocked");
+  expect(run.session_id).toBe("session-1");
+  expect(run.rejected_completion?.reasons[0]).toContain("worktree is dirty");
+  expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
+
+  let authoritySent = false;
+  const resumeLauncher: AgentLauncher = async (plan, logPath) => {
+    authoritySent = plan.args.some((arg) => arg.includes("Controller authority: overlay commits"));
+    await rm(join(value.repo, "uncommitted.txt"));
+    return await launcherFor(report())(plan, logPath);
+  };
+  const completed = await sendRun(run.run_id, "Finish the authorized overlay.", undefined, {
+    ...options(value, resumeLauncher),
+    grant: { overlay_commits: true, push: false, pull_requests: false }
+  });
+  expect(completed.state).toBe("completed");
+  expect(authoritySent).toBe(true);
+  expect(await readLease(value.stateDir, run.git_common_dir)).toBeUndefined();
 });
 
 it("rejects stale decisions and aborting a working run", async () => {

@@ -41,3 +41,54 @@ it("rejects traversal-shaped run ids", async () => {
   const state = await mkdtemp(join(tmpdir(), "regrafter-runs-"));
   await expect(loadRun(state, "../lease")).rejects.toThrow("invalid run id");
 });
+
+it("enforces handed-off audit invariants", async () => {
+  const state = await mkdtemp(join(tmpdir(), "regrafter-runs-"));
+  const value = run("run-33333333333333333333333333333333");
+  await expect(saveRun(state, { ...value, state: "handed_off" })).rejects.toThrow(
+    "handed_off state and audit"
+  );
+  const digest = "a".repeat(64);
+  const evidence = {
+    snapshot: value.last_observed,
+    status_sha256: digest,
+    index_sha256: digest,
+    content_sha256: digest
+  };
+  const handedOff: RunRecord = {
+    ...value,
+    state: "handed_off",
+    handoff: {
+      schema_version: 1,
+      evidence: digest,
+      actor: "operator",
+      reason: "Accepted after external reconciliation.",
+      accepted_at: value.updated_at,
+      previous: value.last_observed,
+      accepted: evidence,
+      release: "released",
+      released_at: value.updated_at
+    }
+  };
+  await saveRun(state, handedOff);
+  expect((await loadRun(state, handedOff.run_id)).handoff?.release).toBe("released");
+  const audit = handedOff.handoff;
+  if (audit === undefined) throw new Error("missing handoff fixture");
+  await expect(
+    saveRun(state, { ...handedOff, handoff: { ...audit, actor: "x".repeat(129) } })
+  ).rejects.toThrow("actor exceeds");
+  await expect(
+    saveRun(state, { ...handedOff, handoff: { ...audit, reason: "x".repeat(2049) } })
+  ).rejects.toThrow("reason exceeds");
+  const missingReleaseTime = { ...audit };
+  delete missingReleaseTime.released_at;
+  await expect(saveRun(state, { ...handedOff, handoff: missingReleaseTime })).rejects.toThrow(
+    "requires released_at"
+  );
+  await expect(
+    saveRun(state, {
+      ...handedOff,
+      handoff: { ...audit, release: "pending" as const }
+    })
+  ).rejects.toThrow("pending handoff cannot include released_at");
+});

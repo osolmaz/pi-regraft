@@ -75,3 +75,22 @@ export function sameSnapshot(left: RepositorySnapshot, right: RepositorySnapshot
     JSON.stringify(left.dirty_paths) === JSON.stringify(right.dirty_paths)
   );
 }
+
+export async function firstParentCommits(
+  repository: string,
+  start: string,
+  end: string
+): Promise<string[]> {
+  if (start === end) return [];
+  const output = await git(repository, [
+    "rev-list",
+    "--first-parent",
+    "--ancestry-path",
+    "--reverse",
+    `${start}..${end}`
+  ]);
+  return output
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
