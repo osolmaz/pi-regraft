@@ -20,6 +20,16 @@ async function repository(): Promise<string> {
   return repo;
 }
 
+async function repositoryWithSubmodule(): Promise<{ repository: string; submodule: string }> {
+  const [parent, source] = await Promise.all([repository(), repository()]);
+  git(parent, ["-c", "protocol.file.allow=always", "submodule", "add", source, "vendor/submodule"]);
+  git(parent, ["commit", "-m", "chore: add submodule"]);
+  const submodule = join(parent, "vendor", "submodule");
+  git(submodule, ["config", "user.name", "Test"]);
+  git(submodule, ["config", "user.email", "test@example.com"]);
+  return { repository: parent, submodule };
+}
+
 it("produces stable evidence without persisting file contents", async () => {
   const repo = await repository();
   await writeFile(join(repo, "tracked.txt"), "private-content-one\n");
@@ -54,4 +64,34 @@ it("binds staged, untracked, and symlink state", async () => {
     const linked = await captureRepositoryEvidence(repo);
     expect(linked.content_sha256).not.toBe(untracked.content_sha256);
   }
+});
+
+it("binds changed bytes inside a dirty submodule", async () => {
+  const value = await repositoryWithSubmodule();
+  const tracked = join(value.submodule, "tracked.txt");
+  await writeFile(tracked, "nested-a\n");
+  const first = await captureRepositoryEvidence(value.repository);
+  await writeFile(tracked, "nested-b\n");
+  const second = await captureRepositoryEvidence(value.repository);
+  expect(second.snapshot).toEqual(first.snapshot);
+  expect(second.status_sha256).toBe(first.status_sha256);
+  expect(second.index_sha256).toBe(first.index_sha256);
+  expect(second.content_sha256).not.toBe(first.content_sha256);
+});
+
+it("binds the current HEAD of a dirty submodule", async () => {
+  const value = await repositoryWithSubmodule();
+  const tracked = join(value.submodule, "tracked.txt");
+  await writeFile(tracked, "submodule-head-a\n");
+  git(value.submodule, ["add", "tracked.txt"]);
+  git(value.submodule, ["commit", "-m", "test: move submodule head"]);
+  const first = await captureRepositoryEvidence(value.repository);
+  await writeFile(tracked, "submodule-head-b\n");
+  git(value.submodule, ["add", "tracked.txt"]);
+  git(value.submodule, ["commit", "-m", "test: move submodule head again"]);
+  const second = await captureRepositoryEvidence(value.repository);
+  expect(second.snapshot).toEqual(first.snapshot);
+  expect(second.status_sha256).toBe(first.status_sha256);
+  expect(second.index_sha256).toBe(first.index_sha256);
+  expect(second.content_sha256).not.toBe(first.content_sha256);
 });

@@ -3,10 +3,18 @@ import { createReadStream, type BigIntStats } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import spawn from "cross-spawn";
-import { sameSnapshot, snapshotRepository } from "./git.js";
+import { parseDirtyPaths, sameSnapshot, snapshotRepository } from "./git.js";
 import type { HandoffCandidate, LeaseRecord, RepositoryEvidence, RunRecord } from "./types.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
+const MAX_CAPTURED_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+type SubmoduleState = {
+  head: string;
+  status: string;
+  statusSha256: string;
+  indexSha256: string;
+};
 
 export async function captureRepositoryEvidence(repository: string): Promise<RepositoryEvidence> {
   const before = await snapshotRepository(repository);
@@ -67,13 +75,35 @@ export function assertEvidenceDigest(value: string): void {
 
 async function hashGitOutput(repository: string, args: readonly string[]): Promise<string> {
   const hash = createHash("sha256");
+  await consumeGitOutput(repository, args, (chunk) => hash.update(chunk));
+  return hash.digest("hex");
+}
+
+async function readGitOutput(repository: string, args: readonly string[]): Promise<string> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  await consumeGitOutput(repository, args, (chunk) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_CAPTURED_GIT_OUTPUT_BYTES) chunks.push(chunk);
+  });
+  if (bytes > MAX_CAPTURED_GIT_OUTPUT_BYTES) {
+    throw new Error("Git output exceeds the handoff evidence capture limit");
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function consumeGitOutput(
+  repository: string,
+  args: readonly string[],
+  consume: (chunk: Buffer) => void
+): Promise<void> {
   const child = spawn("git", args, {
     cwd: repository,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"]
   });
   let stderr = "";
-  child.stdout?.on("data", (chunk: Buffer) => hash.update(chunk));
+  child.stdout?.on("data", consume);
   child.stderr?.on("data", (chunk: Buffer) => {
     if (stderr.length < 8192) stderr += chunk.toString("utf8").slice(0, 8192 - stderr.length);
   });
@@ -85,13 +115,20 @@ async function hashGitOutput(repository: string, args: readonly string[]): Promi
     });
   });
   if (code !== 0) throw new Error(stderr.trim() || `git exited with ${code.toString()}`);
-  return hash.digest("hex");
 }
 
 async function hashPaths(repository: string, paths: readonly string[]): Promise<string> {
   const hash = createHash("sha256");
-  for (const path of [...paths].sort()) await hashPath(hash, repository, path);
+  await updatePaths(hash, repository, paths);
   return hash.digest("hex");
+}
+
+async function updatePaths(
+  hash: Hash,
+  repository: string,
+  paths: readonly string[]
+): Promise<void> {
+  for (const path of [...paths].sort()) await hashPath(hash, repository, path);
 }
 
 async function hashPath(hash: Hash, repository: string, path: string): Promise<void> {
@@ -107,11 +144,61 @@ async function hashPath(hash: Hash, repository: string, path: string): Promise<v
     return;
   }
   updateField(hash, "metadata", metadata(before));
-  await hashPathContents(hash, absolute, before);
+  if (before.isDirectory() && (await isGitlink(repository, path))) {
+    await hashSubmodule(hash, absolute);
+  } else {
+    await hashPathContents(hash, absolute, before);
+  }
   const after = await readStats(absolute);
   if (after === undefined || metadata(before) !== metadata(after)) {
     throw new Error(`repository path changed while Regrafter captured evidence: ${path}`);
   }
+}
+
+async function isGitlink(repository: string, path: string): Promise<boolean> {
+  const output = await readGitOutput(repository, ["ls-files", "--stage", "-z", "--", path]);
+  return output.split("\0").some((entry) => entry.startsWith("160000 "));
+}
+
+async function hashSubmodule(hash: Hash, repository: string): Promise<void> {
+  updateField(hash, "kind", "submodule");
+  const before = await readSubmoduleState(repository);
+  updateField(hash, "submodule_head", before.head);
+  updateField(hash, "submodule_status_sha256", before.statusSha256);
+  updateField(hash, "submodule_index_sha256", before.indexSha256);
+  await updatePaths(hash, repository, parseDirtyPaths(before.status));
+  const after = await readSubmoduleState(repository);
+  if (!sameSubmoduleState(before, after)) {
+    throw new Error("submodule changed while Regrafter captured handoff evidence");
+  }
+}
+
+async function readSubmoduleState(repository: string): Promise<SubmoduleState> {
+  const [head, status, indexSha256] = await Promise.all([
+    readGitOutput(repository, ["rev-parse", "HEAD"]),
+    readGitOutput(repository, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--ignore-submodules=none"
+    ]),
+    hashGitOutput(repository, ["ls-files", "--stage", "-z"])
+  ]);
+  return {
+    head: head.trim(),
+    status,
+    statusSha256: createHash("sha256").update(status).digest("hex"),
+    indexSha256
+  };
+}
+
+function sameSubmoduleState(left: SubmoduleState, right: SubmoduleState): boolean {
+  return (
+    left.head === right.head &&
+    left.status === right.status &&
+    left.indexSha256 === right.indexSha256
+  );
 }
 
 async function hashPathContents(
