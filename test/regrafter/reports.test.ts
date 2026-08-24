@@ -67,11 +67,11 @@ describe("parseAgentReport", () => {
     expect(() => parseAgentReport(value)).toThrow("only valid");
   });
 
-  it("does not accept a failed check as completed", () => {
+  it("leaves failed completion checks for controller validation", () => {
     const value = {
       ...base("completed"),
       checks: [{ command: "npm test", scope: "repo", outcome: "failed", exit_code: 1 }]
     };
-    expect(() => parseAgentReport(value)).toThrow("cannot include a failed check");
+    expect(parseAgentReport(value).state).toBe("completed");
   });
 });

@@ -163,7 +163,7 @@ async function attachRunLocked(
   const sessionId = attachSession(run, id);
   await assertLeaseAndSnapshot(run, stateDir);
   const working: RunRecord = {
-    ...run,
+    ...withoutReportAndInterruption(run),
     state: "working",
     process: { pid: process.pid, started_at: now() },
     updated_at: now()
