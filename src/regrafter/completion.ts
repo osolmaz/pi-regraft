@@ -131,7 +131,10 @@ async function graftCommitProblems(
     starting.dest,
     updated.new_upstream
   ).catch(() => undefined);
-  const problems = localBase === base.sha ? [] : [basePreservationProblem(updated.graft)];
+  const problems = [
+    ...overlayAuthorityProblems(run, updated.graft, overlays.length),
+    ...(localBase === base.sha ? [] : [basePreservationProblem(updated.graft)])
+  ];
   const validOverlays = overlaysInBaseSegment(report, overlays, base.index);
   if (validOverlays.length !== overlays.length) {
     problems.push(`updated graft "${updated.graft}" reports an overlay outside its base segment`);
@@ -140,6 +143,12 @@ async function graftCommitProblems(
     problems.push(`updated graft "${updated.graft}" requires an overlay commit`);
   }
   return problems;
+}
+
+function overlayAuthorityProblems(run: RunRecord, graft: string, overlayCount: number): string[] {
+  return overlayCount > 0 && !run.authority.overlay_commits
+    ? [`updated graft "${graft}" reports an overlay commit without overlay authority`]
+    : [];
 }
 
 function overlaysInBaseSegment(

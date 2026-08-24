@@ -164,6 +164,20 @@ it("rejects a missing required overlay and an incomplete commit report", async (
   expect(problems).toContain('updated graft "foo" requires an overlay commit');
 });
 
+it("rejects an overlay commit without controller authority", async () => {
+  const value = await fixture();
+  const unauthorized = run(value);
+  unauthorized.authority.overlay_commits = false;
+  const problems = await completionProblems(
+    unauthorized,
+    report(value),
+    await snapshotRepository(value.repo)
+  );
+  expect(problems).toContain(
+    'updated graft "foo" reports an overlay commit without overlay authority'
+  );
+});
+
 it("rejects dirty completion after a valid commit chain", async () => {
   const value = await fixture();
   await writeFile(join(value.repo, "pending.txt"), "pending\n");

@@ -462,6 +462,20 @@ it("clears rejected completion state before an attached retry", async () => {
   expect(completed.rejected_completion).toBeUndefined();
 });
 
+it("preserves rejected completion evidence when an attached retry has no report", async () => {
+  const value = await fixture();
+  const dirtyCompletion: AgentLauncher = async (plan, logPath) => {
+    await writeFile(join(value.repo, "uncommitted.txt"), "not done\n");
+    return await launcherFor(report())(plan, logPath);
+  };
+  const blocked = await startRun(value.repo, "Update.", options(value, dirtyCompletion));
+  const original = await inspectRun(blocked.run_id, value);
+  const attached = await attachRun(blocked.run_id, value);
+  expect(attached.state).toBe("blocked");
+  expect(attached.report).toEqual(original.report);
+  expect(attached.rejected_completion).toEqual(original.rejected_completion);
+});
+
 it("rejects stale decisions and aborting a working run", async () => {
   const value = await fixture();
   const paused = await startRun(
