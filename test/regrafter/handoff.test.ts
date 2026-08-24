@@ -240,8 +240,18 @@ it("rejects credential-bearing handoff audit text without persisting it", async 
       options(value)
     )
   ).rejects.toThrow("must not contain credentials");
+  await expect(
+    acceptHandoff(
+      blocked.run_id,
+      prepared.evidence,
+      "test-operator",
+      "Reviewed at https://example.com/repository?access_token=query-secret-abc123.",
+      options(value)
+    )
+  ).rejects.toThrow("must not contain credentials");
   const run = await inspectRun(blocked.run_id, options(value));
   expect(JSON.stringify(run)).not.toContain("super-secret");
+  expect(JSON.stringify(run)).not.toContain("query-secret-abc123");
   expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
 });
 

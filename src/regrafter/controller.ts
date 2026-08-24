@@ -4,7 +4,7 @@ import type { ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { URL, fileURLToPath } from "node:url";
 import spawn from "cross-spawn";
 import {
   createPiLaunchPlan,
@@ -48,6 +48,29 @@ export type ControllerOptions = {
 };
 export type StartOptions = ControllerOptions & { authority?: RunAuthority };
 export type SendOptions = ControllerOptions & { grant?: RunAuthority };
+
+const CREDENTIAL_QUERY_KEYS = new Set([
+  "accesstoken",
+  "apikey",
+  "authtoken",
+  "bearertoken",
+  "clientsecret",
+  "credential",
+  "oauthtoken",
+  "password",
+  "passwd",
+  "privatetoken",
+  "refreshtoken",
+  "secret",
+  "sig",
+  "signature",
+  "token",
+  "xamzcredential",
+  "xamzsecuritytoken",
+  "xamzsignature",
+  "xgoogcredential",
+  "xgoogsignature"
+]);
 
 function now(): string {
   return new Date().toISOString();
@@ -385,10 +408,33 @@ function assertAuditText(actor: string, reason: string): void {
   if (reason.trim() === "" || Buffer.byteLength(reason, "utf8") > 2048) {
     throw new Error("handoff reason must contain 1 to 2048 UTF-8 bytes");
   }
-  const secrets = sensitiveValues(process.env);
-  if (redactText(actor, secrets) !== actor || redactText(reason, secrets) !== reason) {
+  if (auditTextContainsCredentials(actor, reason)) {
     throw new Error("handoff audit text must not contain credentials");
   }
+}
+
+function auditTextContainsCredentials(actor: string, reason: string): boolean {
+  const secrets = sensitiveValues(process.env);
+  return (
+    redactText(actor, secrets) !== actor ||
+    redactText(reason, secrets) !== reason ||
+    containsCredentialQuery(actor) ||
+    containsCredentialQuery(reason)
+  );
+}
+
+function containsCredentialQuery(text: string): boolean {
+  const candidates = text.match(/https?:\/\/[^\s<>"']+/giu) ?? [];
+  return candidates.some((candidate) => {
+    try {
+      const url = new URL(candidate);
+      return [...url.searchParams.keys()].some((key) =>
+        CREDENTIAL_QUERY_KEYS.has(key.toLowerCase().replace(/[._-]/gu, ""))
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 function assertMatchingHandoff(
