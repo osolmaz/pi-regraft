@@ -224,6 +224,27 @@ it("binds acceptance to the prepared repository state", async () => {
   expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
 });
 
+it("rejects credential-bearing handoff audit text without persisting it", async () => {
+  const value = await fixture();
+  const blocked = await startRun(value.repo, "Update.", {
+    ...options(value),
+    launcher: dirtyLauncher(value.repo)
+  });
+  const prepared = await prepareHandoff(blocked.run_id, options(value));
+  await expect(
+    acceptHandoff(
+      blocked.run_id,
+      prepared.evidence,
+      "test-operator",
+      "Reviewed at https://user:super-secret@example.com/repository.git.",
+      options(value)
+    )
+  ).rejects.toThrow("must not contain credentials");
+  const run = await inspectRun(blocked.run_id, options(value));
+  expect(JSON.stringify(run)).not.toContain("super-secret");
+  expect((await readLease(value.stateDir, run.git_common_dir))?.run_id).toBe(run.run_id);
+});
+
 it("finishes a durable handoff after lease release previously failed", async () => {
   const value = await fixture();
   const blocked = await startRun(value.repo, "Update.", {
